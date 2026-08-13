@@ -37,7 +37,7 @@ INT_FMT = '#,##0;(#,##0);-'
 MON_FMT = 'R #,##0.00;(R #,##0.00);-'
 PCT_FMT = '0.00"%";(0.00"%");-'
 
-CASH_REQUIRED = ["Cashier", "Shop", "Game", "Paid In Count",
+CASH_REQUIRED = ["Cashier", "Shop", "Game",
                  "Paid Out - Revoked Count", "Revoked Sum"]
 SLIP_REQUIRED = ["Game", "Shop", "User", "Bet Slips", "First Slip Issued",
                  "Last Slip Issued", "Paid In", "Net Win"]
@@ -62,11 +62,25 @@ def missing(df, cols):
     return [c for c in cols if c not in df.columns]
 
 
-def prep_cash(df, drop_managers):
-    d = df.copy()
-    d["Bets"] = num(d["Paid In Count"])
-    d["Revokes"] = num(d["Paid Out - Revoked Count"])
-    d["RevokedSum"] = num(d["Revoked Sum"])
+def prep_cash(cash_df, slip_df, drop_managers):
+    """Combined per Shop+Cashier+Game frame.
+    Bets come from the Slip report's Bet Slips (keyed on User) — this matches the
+    Aardvark bet count. Revokes and revoked amounts come from the Cash Operations
+    report (keyed on Cashier). The two are joined on Shop+Cashier+Game."""
+    c = cash_df.copy()
+    c["Revokes"] = num(c["Paid Out - Revoked Count"])
+    c["RevokedSum"] = num(c["Revoked Sum"])
+    c = c.groupby(["Shop", "Cashier", "Game"], as_index=False).agg(
+        Revokes=("Revokes", "sum"), RevokedSum=("RevokedSum", "sum"))
+
+    sp = slip_df.copy()
+    sp["Bets"] = num(sp["Bet Slips"])
+    sp = sp.groupby(["Shop", "User", "Game"], as_index=False).agg(Bets=("Bets", "sum"))
+    sp = sp.rename(columns={"User": "Cashier"})
+
+    d = pd.merge(sp, c, on=["Shop", "Cashier", "Game"], how="outer")
+    for col in ("Bets", "Revokes", "RevokedSum"):
+        d[col] = d[col].fillna(0)
     d["IsManager"] = d["Cashier"].astype(str).str.contains("manager", case=False, na=False)
     if drop_managers:
         d = d[~d["IsManager"]]
@@ -355,7 +369,7 @@ def build_workbook(cash, slip):
         r += 1
     r += 1
     sm.cell(row=r, column=1,
-            value='Definitions — "Bets" = Paid In Count. "Revokes" = Paid Out Revoked Count. '
+            value='Definitions — "Bets" = Bet Slips (from the Slip report, matching Aardvark). "Revokes" = Paid Out Revoked Count. '
                   '"Revoked Amount" = Revoked Sum. Margins = Net Win / Paid In from the Slip report.').font = NOTE_F
     r += 1
     sm.cell(row=r, column=1,
@@ -388,8 +402,7 @@ with st.sidebar:
 if not cash_file or not slip_file:
     st.info("Upload both reports in the sidebar to begin.")
     st.markdown("""
-**Cash Operations Summary** needs: `Cashier`, `Shop`, `Game`, `Paid In Count`,
-`Paid Out - Revoked Count`, `Revoked Sum`.
+**Cash Operations Summary** needs: `Cashier`, `Shop`, `Game`, `Paid Out - Revoked Count`, `Revoked Sum`.
 
 **Slip Summary** needs: `Game`, `Shop`, `User`, `Bet Slips`, `First Slip Issued`,
 `Last Slip Issued`, `Paid In`, `Net Win`.
@@ -412,7 +425,7 @@ if mc or ms:
     st.caption("Check you haven't swapped the two files in the uploader.")
     st.stop()
 
-cash = prep_cash(cash_raw, drop_mgr)
+cash = prep_cash(cash_raw, slip_raw, drop_mgr)
 slip = prep_slip(slip_raw)
 if cash.empty:
     st.warning("No cashier rows left after filtering.")
@@ -429,7 +442,7 @@ hdr = f"Period: {period}" if period.strip() else ""
 if hdr:
     st.caption(hdr)
 if drop_mgr:
-    n_mgr = prep_cash(cash_raw, False)["IsManager"].sum()
+    n_mgr = prep_cash(cash_raw, slip_raw, False)["IsManager"].sum()
     st.caption(f"Manager accounts excluded ({int(n_mgr)} source rows).")
 
 k1, k2, k3, k4, k5 = st.columns(5)
