@@ -535,10 +535,16 @@ with tab_over:
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Bets by branch")
-        st.bar_chart(bo.set_index("Branch")["Bets"])
+        _b = bo[["Branch", "Bets"]].sort_values("Bets", ascending=False)
+        st.dataframe(_b, use_container_width=True, hide_index=True,
+                     column_config={"Bets": st.column_config.ProgressColumn(
+                         "Bets", format="%d", min_value=0, max_value=int(_b["Bets"].max()))})
     with c2:
         st.caption("Revokes by branch")
-        st.bar_chart(bo.set_index("Branch")["Revokes"])
+        _r = bo[["Branch", "Revokes"]].sort_values("Revokes", ascending=False)
+        st.dataframe(_r, use_container_width=True, hide_index=True,
+                     column_config={"Revokes": st.column_config.ProgressColumn(
+                         "Revokes", format="%d", min_value=0, max_value=int(_r["Revokes"].max()))})
 
     st.subheader("Overall highlights")
     csn = cs[~cs["IsMgr"]] if "IsMgr" in cs.columns else cs
@@ -584,10 +590,16 @@ with tab_branch:
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Top 15 cashiers by bets")
-        st.bar_chart(sub.head(15).set_index("Cashier")["Bets"])
+        _t = sub.head(15)[["Cashier", "Bets"]]
+        st.dataframe(_t, use_container_width=True, hide_index=True,
+                     column_config={"Bets": st.column_config.ProgressColumn(
+                         "Bets", format="%d", min_value=0, max_value=int(_t["Bets"].max()) if len(_t) else 1)})
     with c2:
         st.caption("Bets per game")
-        st.bar_chart(gsub.set_index("Game")["Bets"])
+        _g = gsub[["Game", "Bets"]].sort_values("Bets", ascending=False)
+        st.dataframe(_g, use_container_width=True, hide_index=True,
+                     column_config={"Bets": st.column_config.ProgressColumn(
+                         "Bets", format="%d", min_value=0, max_value=int(_g["Bets"].max()) if len(_g) else 1)})
 
     st.subheader("Branch highlights")
     subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
