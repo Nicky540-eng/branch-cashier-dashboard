@@ -92,10 +92,17 @@ def money(v):
 
 # ================================================================= EXCEL
 def build_workbook(cash, slip):
-    """Formula-driven workbook (SUMIFS/INDEX/MATCH), as deployed locally. Note: a
-    freshly downloaded file opens in Excel Protected View; click 'Enable Editing'
-    once and all formulas calculate."""
+    """Values-only workbook. Every figure is computed in Python and written as a
+    literal number, so all figures display immediately with no need to enable
+    editing or recalculate."""
     BRANCHES = sorted(cash["Shop"].dropna().unique())
+
+    cs = cash.groupby(["Shop", "Cashier"], as_index=False).agg(
+        Bets=("Bets", "sum"), Revokes=("Revokes", "sum"),
+        RevSum=("RevokedSum", "sum"), IsMgr=("IsManager", "max"))
+    cg = cash.groupby(["Shop", "Game"], as_index=False).agg(
+        Bets=("Bets", "sum"), Revokes=("Revokes", "sum"), RevSum=("RevokedSum", "sum"))
+
     wb = Workbook()
 
     def hrow(s, row, headers, widths=None):
@@ -108,6 +115,18 @@ def build_workbook(cash, slip):
                 s.column_dimensions[get_column_letter(i)].width = w
         return row + 1
 
+    def put(s, r, c, val, fmt=None, font=BODY, fill=None, border=True):
+        cell = s.cell(row=r, column=c, value=val)
+        cell.font = font
+        if fmt:
+            cell.number_format = fmt
+        if fill:
+            cell.fill = fill
+        if border:
+            cell.border = BOX
+        return cell
+
+    # raw data (audit)
     ws = wb.active
     ws.title = "CashData"
     ccols = ["Cashier", "Shop", "Game", "Bets", "Revokes", "RevokedSum"]
@@ -116,8 +135,7 @@ def build_workbook(cash, slip):
         cell = ws.cell(row=1, column=c); cell.fill = HDR_FILL; cell.font = HDR_FONT
     for _, rw in cash[ccols].iterrows():
         ws.append([rw[k] for k in ccols])
-    CN = len(cash) + 1
-    for row in ws.iter_rows(min_row=2, max_row=CN, max_col=len(ccols)):
+    for row in ws.iter_rows(min_row=2, max_row=len(cash) + 1, max_col=len(ccols)):
         for cell in row:
             cell.font = BODY
             if cell.column in (4, 5): cell.number_format = INT_FMT
@@ -133,8 +151,7 @@ def build_workbook(cash, slip):
         cell = ws2.cell(row=1, column=c); cell.fill = HDR_FILL; cell.font = HDR_FONT
     for _, rw in slip[scols].iterrows():
         ws2.append([rw[k] for k in scols])
-    SN = len(slip) + 1
-    for row in ws2.iter_rows(min_row=2, max_row=SN, max_col=len(scols)):
+    for row in ws2.iter_rows(min_row=2, max_row=len(slip) + 1, max_col=len(scols)):
         for cell in row:
             cell.font = BODY
             if cell.column == 4: cell.number_format = INT_FMT
@@ -143,151 +160,114 @@ def build_workbook(cash, slip):
     for i, w in enumerate([26, 15, 18, 12, 14, 14], start=1):
         ws2.column_dimensions[get_column_letter(i)].width = w
 
-    CD = f"CashData!$B$2:$B${CN}"; CD_C = f"CashData!$A$2:$A${CN}"; CD_G = f"CashData!$C$2:$C${CN}"
-    CD_B = f"CashData!$D$2:$D${CN}"; CD_R = f"CashData!$E$2:$E${CN}"; CD_RS = f"CashData!$F$2:$F${CN}"
-    SD_SH = f"SlipData!$B$2:$B${SN}"; SD_SL = f"SlipData!$D$2:$D${SN}"
-    SD_IN = f"SlipData!$E$2:$E${SN}"; SD_NW = f"SlipData!$F$2:$F${SN}"
-
-    cs = cash.groupby(["Shop", "Cashier"], as_index=False).agg(
-        Bets=("Bets", "sum"), Revokes=("Revokes", "sum"),
-        RevSum=("RevokedSum", "sum"), IsMgr=("IsManager", "max"))
-    cg = cash.groupby(["Shop", "Game"], as_index=False).agg(
-        Bets=("Bets", "sum"), Revokes=("Revokes", "sum"))
-
     for br in BRANCHES:
         s = wb.create_sheet(str(br)[:31])
         s.cell(row=1, column=1, value=f"{br} — Cashier & Game Report").font = TITLE_FONT
         r = 3
         s.cell(row=r, column=1, value="Cashier performance").font = LBL_FONT
         r += 1
-        kr = r
-        s.cell(row=kr, column=7, value="Branch key:").font = NOTE_F
-        s.cell(row=kr, column=8, value=br).font = LBL_FONT
         r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount"], [30, 14, 15, 18])
-        first = r
-        for n in cs[cs["Shop"] == br].sort_values("Bets", ascending=False)["Cashier"]:
-            s.cell(row=r, column=1, value=n).font = BODY
-            s.cell(row=r, column=2, value=f'=SUMIFS({CD_B},{CD},$H${kr},{CD_C},$A{r})').number_format = INT_FMT
-            s.cell(row=r, column=3, value=f'=SUMIFS({CD_R},{CD},$H${kr},{CD_C},$A{r})').number_format = INT_FMT
-            s.cell(row=r, column=4, value=f'=SUMIFS({CD_RS},{CD},$H${kr},{CD_C},$A{r})').number_format = MON_FMT
-            for c in range(1, 5):
-                s.cell(row=r, column=c).border = BOX; s.cell(row=r, column=c).font = BODY
+        sub = cs[cs["Shop"] == br].sort_values("Bets", ascending=False)
+        for _, row_ in sub.iterrows():
+            put(s, r, 1, row_["Cashier"])
+            put(s, r, 2, int(row_["Bets"]), INT_FMT)
+            put(s, r, 3, int(row_["Revokes"]), INT_FMT)
+            put(s, r, 4, float(row_["RevSum"]), MON_FMT)
             r += 1
-        last = r - 1
-        for lab, f2, f3, f4 in [
-            ("BRANCH TOTAL", f'=SUM(B{first}:B{last})', f'=SUM(C{first}:C{last})', f'=SUM(D{first}:D{last})'),
-            ("BRANCH AVERAGE (per cashier)", f'=IFERROR(AVERAGE(B{first}:B{last}),0)',
-             f'=IFERROR(AVERAGE(C{first}:C{last}),0)', f'=IFERROR(AVERAGE(D{first}:D{last}),0)')]:
-            s.cell(row=r, column=1, value=lab).font = LBL_FONT
-            for c, f in ((2, f2), (3, f3), (4, f4)):
-                cell = s.cell(row=r, column=c, value=f); cell.font = LBL_FONT
-                cell.number_format = MON_FMT if c == 4 else INT_FMT
-            for c in range(1, 5):
-                s.cell(row=r, column=c).fill = SUB_FILL; s.cell(row=r, column=c).border = BOX
-            r += 1
-        s.cell(row=r, column=1, value="Cashiers counted").font = BODY
-        s.cell(row=r, column=2, value=f'=COUNTA(A{first}:A{last})').number_format = INT_FMT
+        put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL)
+        put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+        r += 1
+        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, fill=SUB_FILL)
+        put(s, r, 2, round(float(sub["Bets"].mean()), 0) if len(sub) else 0, INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 3, round(float(sub["Revokes"].mean()), 1) if len(sub) else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
+        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, SUB_FILL)
+        r += 1
+        put(s, r, 1, "Cashiers counted", border=False)
+        put(s, r, 2, int(len(sub)), INT_FMT, border=False)
         r += 3
 
-        # highlights — managers excluded (literal values, managers filtered in python)
-        sub_all = cs[cs["Shop"] == br]
-        sub_nom = sub_all[~sub_all["IsMgr"]]
-        sub_nom = sub_nom if len(sub_nom) else sub_all
-        mb = sub_all.loc[sub_all["Bets"].idxmax()]
-        lb = sub_nom.loc[sub_nom["Bets"].idxmin()]
-        mr = sub_nom.loc[sub_nom["Revokes"].idxmax()]
+        subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
+        subn = subn if len(subn) else sub
+        mb = sub.loc[sub["Bets"].idxmax()]
+        lb = subn.loc[subn["Bets"].idxmin()]
+        mr = subn.loc[subn["Revokes"].idxmax()]
         s.cell(row=r, column=1, value="Branch highlights").font = LBL_FONT
         r += 1
         r = hrow(s, r, ["Measure", "Cashier", "Value"], [40, 30, 18])
-        for lab, who, val, fmt in [
+        for label, who, val, fmt in [
             ("Most bets (cashier)", mb["Cashier"], int(mb["Bets"]), INT_FMT),
             ("Least bets (cashier, managers excluded)", lb["Cashier"], int(lb["Bets"]), INT_FMT),
             ("Most revokes (cashier, managers excluded)", mr["Cashier"], int(mr["Revokes"]), INT_FMT),
             ("Revoked amount of that cashier", None, float(mr["RevSum"]), MON_FMT),
         ]:
-            s.cell(row=r, column=1, value=lab).font = BODY
-            if who is not None:
-                s.cell(row=r, column=2, value=who).font = BODY
-            c = s.cell(row=r, column=3, value=val); c.font = BODY; c.number_format = fmt
-            for cc in range(1, 4):
-                s.cell(row=r, column=cc).border = BOX
+            put(s, r, 1, label)
+            if who is not None: put(s, r, 2, who)
+            else: s.cell(row=r, column=2).border = BOX
+            put(s, r, 3, val, fmt)
             r += 1
         r += 2
 
         s.cell(row=r, column=1, value="Bets & revokes per game").font = LBL_FONT
         r += 1
         r = hrow(s, r, ["Game", "Bets", "Revokes", "Revoked Amount"], [30, 14, 15, 18])
-        gf = r
-        for g in cg[cg["Shop"] == br].sort_values("Bets", ascending=False)["Game"]:
-            s.cell(row=r, column=1, value=g).font = BODY
-            s.cell(row=r, column=2, value=f'=SUMIFS({CD_B},{CD},$H${kr},{CD_G},$A{r})').number_format = INT_FMT
-            s.cell(row=r, column=3, value=f'=SUMIFS({CD_R},{CD},$H${kr},{CD_G},$A{r})').number_format = INT_FMT
-            s.cell(row=r, column=4, value=f'=SUMIFS({CD_RS},{CD},$H${kr},{CD_G},$A{r})').number_format = MON_FMT
-            for c in range(1, 5):
-                s.cell(row=r, column=c).border = BOX; s.cell(row=r, column=c).font = BODY
+        gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
+        for _, row_ in gsub.iterrows():
+            put(s, r, 1, row_["Game"])
+            put(s, r, 2, int(row_["Bets"]), INT_FMT)
+            put(s, r, 3, int(row_["Revokes"]), INT_FMT)
+            put(s, r, 4, float(row_["RevSum"]), MON_FMT)
             r += 1
-        gl = r - 1
-        s.cell(row=r, column=1, value="TOTAL").font = LBL_FONT
-        for c, f in ((2, f'=SUM(B{gf}:B{gl})'), (3, f'=SUM(C{gf}:C{gl})'), (4, f'=SUM(D{gf}:D{gl})')):
-            cell = s.cell(row=r, column=c, value=f); cell.font = LBL_FONT
-            cell.number_format = MON_FMT if c == 4 else INT_FMT
-        for c in range(1, 5):
-            s.cell(row=r, column=c).fill = SUB_FILL; s.cell(row=r, column=c).border = BOX
+        put(s, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
+        put(s, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
         r += 2
-        for lab, col in (("Game with most bets", "B"), ("Game with most revokes", "C")):
-            s.cell(row=r, column=1, value=lab).font = LBL_FONT
-            s.cell(row=r, column=2,
-                   value=f'=INDEX(A{gf}:A{gl},MATCH(MAX({col}{gf}:{col}{gl}),{col}{gf}:{col}{gl},0))').font = BODY
-            c = s.cell(row=r, column=3, value=f'=MAX({col}{gf}:{col}{gl})'); c.number_format = INT_FMT; c.font = BODY
+        if len(gsub):
+            gb = gsub.loc[gsub["Bets"].idxmax()]; gr = gsub.loc[gsub["Revokes"].idxmax()]
+            put(s, r, 1, "Game with most bets", font=LBL_FONT, border=False)
+            put(s, r, 2, gb["Game"], border=False)
+            put(s, r, 3, int(gb["Bets"]), INT_FMT, border=False)
             r += 1
+            put(s, r, 1, "Game with most revokes", font=LBL_FONT, border=False)
+            put(s, r, 2, gr["Game"], border=False)
+            put(s, r, 3, int(gr["Revokes"]), INT_FMT, border=False)
         s.freeze_panes = "A4"
 
     ac = wb.create_sheet("All Cashiers")
     ac.cell(row=1, column=1, value="All Cashiers — All Branches").font = TITLE_FONT
-    r = hrow(ac, 3, ["Cashier", "Branch", "Total Bets", "Total Revokes", "Revoked Amount"],
-             [30, 16, 14, 15, 18])
-    af = r
-    for _, rw in cs.sort_values("Bets", ascending=False).iterrows():
-        ac.cell(row=r, column=1, value=rw["Cashier"]).font = BODY
-        ac.cell(row=r, column=2, value=rw["Shop"]).font = BODY
-        ac.cell(row=r, column=3, value=f'=SUMIFS({CD_B},{CD_C},$A{r},{CD},$B{r})').number_format = INT_FMT
-        ac.cell(row=r, column=4, value=f'=SUMIFS({CD_R},{CD_C},$A{r},{CD},$B{r})').number_format = INT_FMT
-        ac.cell(row=r, column=5, value=f'=SUMIFS({CD_RS},{CD_C},$A{r},{CD},$B{r})').number_format = MON_FMT
-        for c in range(1, 6):
-            ac.cell(row=r, column=c).border = BOX; ac.cell(row=r, column=c).font = BODY
+    r = hrow(ac, 3, ["Cashier", "Branch", "Total Bets", "Total Revokes", "Revoked Amount"], [30, 16, 14, 15, 18])
+    allc = cs.sort_values("Bets", ascending=False)
+    for _, row_ in allc.iterrows():
+        put(ac, r, 1, row_["Cashier"]); put(ac, r, 2, row_["Shop"])
+        put(ac, r, 3, int(row_["Bets"]), INT_FMT)
+        put(ac, r, 4, int(row_["Revokes"]), INT_FMT)
+        put(ac, r, 5, float(row_["RevSum"]), MON_FMT)
         r += 1
-    al = r - 1
-    ac.cell(row=r, column=1, value="GRAND TOTAL").font = LBL_FONT
-    for c in (3, 4, 5):
-        L = get_column_letter(c)
-        cell = ac.cell(row=r, column=c, value=f'=SUM({L}{af}:{L}{al})')
-        cell.font = LBL_FONT; cell.number_format = MON_FMT if c == 5 else INT_FMT
-    for c in range(1, 6):
-        ac.cell(row=r, column=c).fill = SUB_FILL; ac.cell(row=r, column=c).border = BOX
+    put(ac, r, 1, "GRAND TOTAL", font=LBL_FONT, fill=SUB_FILL)
+    put(ac, r, 2, "", font=LBL_FONT, fill=SUB_FILL)
+    put(ac, r, 3, int(allc["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+    put(ac, r, 4, int(allc["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+    put(ac, r, 5, float(allc["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
     ac.freeze_panes = "A4"
 
     bgs = wb.create_sheet("Bets per Game")
     bgs.cell(row=1, column=1, value="Bets per Game — by Branch").font = TITLE_FONT
     r = hrow(bgs, 3, ["Game"] + list(BRANCHES) + ["All Branches"], [26] + [16] * len(BRANCHES) + [16])
-    gf = r
-    for g in cash.groupby("Game", as_index=False)["Bets"].sum().sort_values("Bets", ascending=False)["Game"]:
-        bgs.cell(row=r, column=1, value=g).font = BODY
-        for i in range(2, len(BRANCHES) + 2):
-            col = get_column_letter(i)
-            bgs.cell(row=r, column=i, value=f'=SUMIFS({CD_B},{CD_G},$A{r},{CD},{col}$3)').number_format = INT_FMT
-        ec = get_column_letter(len(BRANCHES) + 1)
-        bgs.cell(row=r, column=len(BRANCHES) + 2, value=f'=SUM(B{r}:{ec}{r})').number_format = INT_FMT
-        for c in range(1, len(BRANCHES) + 3):
-            bgs.cell(row=r, column=c).border = BOX; bgs.cell(row=r, column=c).font = BODY
+    gpiv = cash.pivot_table(index="Game", columns="Shop", values="Bets", aggfunc="sum", fill_value=0)
+    gpiv["_all"] = gpiv.sum(axis=1)
+    gpiv = gpiv.sort_values("_all", ascending=False)
+    for game, row_ in gpiv.iterrows():
+        put(bgs, r, 1, game)
+        for i, br in enumerate(BRANCHES, start=2):
+            put(bgs, r, i, int(row_.get(br, 0)), INT_FMT)
+        put(bgs, r, len(BRANCHES) + 2, int(row_["_all"]), INT_FMT)
         r += 1
-    gl = r - 1
-    bgs.cell(row=r, column=1, value="TOTAL").font = LBL_FONT
-    for c in range(2, len(BRANCHES) + 3):
-        L = get_column_letter(c)
-        cell = bgs.cell(row=r, column=c, value=f'=SUM({L}{gf}:{L}{gl})')
-        cell.font = LBL_FONT; cell.number_format = INT_FMT
-    for c in range(1, len(BRANCHES) + 3):
-        bgs.cell(row=r, column=c).fill = SUB_FILL; bgs.cell(row=r, column=c).border = BOX
+    put(bgs, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
+    for i, br in enumerate(BRANCHES, start=2):
+        put(bgs, r, i, int(gpiv[br].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+    put(bgs, r, len(BRANCHES) + 2, int(gpiv["_all"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
     bgs.freeze_panes = "B4"
 
     sl = wb.create_sheet("Slip Summary")
@@ -295,35 +275,31 @@ def build_workbook(cash, slip):
     r = hrow(sl, 3, ["Branch", "Total Betslips", "Paid In", "Net Win", "GW Margin %",
                      "Net Win Margin %", "First Slip Issued", "Last Slip Issued"],
              [16, 16, 16, 16, 14, 16, 20, 20])
-    sf = r
     for br in BRANCHES:
         sub = slip[slip["Shop"] == br]
-        sl.cell(row=r, column=1, value=br).font = BODY
-        sl.cell(row=r, column=2, value=f'=SUMIFS({SD_SL},{SD_SH},$A{r})').number_format = INT_FMT
-        sl.cell(row=r, column=3, value=f'=SUMIFS({SD_IN},{SD_SH},$A{r})').number_format = MON_FMT
-        sl.cell(row=r, column=4, value=f'=SUMIFS({SD_NW},{SD_SH},$A{r})').number_format = MON_FMT
-        sl.cell(row=r, column=5, value=f'=IFERROR(D{r}/C{r}*100,0)').number_format = PCT_FMT
-        sl.cell(row=r, column=6, value=f'=IFERROR(D{r}/C{r}*100,0)').number_format = PCT_FMT
-        for c, v in ((7, sub["FirstDT"].min()), (8, sub["LastDT"].max())):
-            cell = sl.cell(row=r, column=c, value=v.to_pydatetime() if pd.notna(v) else None)
-            cell.number_format = "dd/mm/yyyy hh:mm"; cell.font = BODY
-        for c in range(1, 9):
-            sl.cell(row=r, column=c).border = BOX; sl.cell(row=r, column=c).font = BODY
+        betslips = int(sub["BetSlips"].sum()); paidin = float(sub["PaidIn"].sum()); netwin = float(sub["NetWin"].sum())
+        gw = round(netwin / paidin * 100, 2) if paidin else 0
+        put(sl, r, 1, br); put(sl, r, 2, betslips, INT_FMT)
+        put(sl, r, 3, paidin, MON_FMT); put(sl, r, 4, netwin, MON_FMT)
+        put(sl, r, 5, gw, PCT_FMT); put(sl, r, 6, gw, PCT_FMT)
+        fd, ld = sub["FirstDT"].min(), sub["LastDT"].max()
+        c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None)
+        c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None)
+        c7.number_format = "dd/mm/yyyy hh:mm"; c8.number_format = "dd/mm/yyyy hh:mm"
         r += 1
-    sll = r - 1
-    sl.cell(row=r, column=1, value="ALL BRANCHES").font = LBL_FONT
-    for c in (2, 3, 4):
-        L = get_column_letter(c)
-        cell = sl.cell(row=r, column=c, value=f'=SUM({L}{sf}:{L}{sll})')
-        cell.font = LBL_FONT; cell.number_format = INT_FMT if c == 2 else MON_FMT
-    for c in (5, 6):
-        cell = sl.cell(row=r, column=c, value=f'=IFERROR(D{r}/C{r}*100,0)')
-        cell.font = LBL_FONT; cell.number_format = PCT_FMT
-    for c, v in ((7, slip["FirstDT"].min()), (8, slip["LastDT"].max())):
-        cell = sl.cell(row=r, column=c, value=v.to_pydatetime() if pd.notna(v) else None)
-        cell.number_format = "dd/mm/yyyy hh:mm"; cell.font = LBL_FONT
-    for c in range(1, 9):
-        sl.cell(row=r, column=c).fill = SUB_FILL; sl.cell(row=r, column=c).border = BOX
+    tb = int(slip["BetSlips"].sum()); tin = float(slip["PaidIn"].sum()); tnw = float(slip["NetWin"].sum())
+    tgw = round(tnw / tin * 100, 2) if tin else 0
+    put(sl, r, 1, "ALL BRANCHES", font=LBL_FONT, fill=SUB_FILL)
+    put(sl, r, 2, tb, INT_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 3, tin, MON_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 4, tnw, MON_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 5, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 6, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
+    fd, ld = slip["FirstDT"].min(), slip["LastDT"].max()
+    c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None, font=LBL_FONT, fill=SUB_FILL)
+    c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None, font=LBL_FONT, fill=SUB_FILL)
+    c7.number_format = "dd/mm/yyyy hh:mm"; c8.number_format = "dd/mm/yyyy hh:mm"
+    sl.freeze_panes = "A4"
 
     sm = wb.create_sheet("Summary", 0)
     sm.cell(row=1, column=1, value="Branch & Cashier Performance").font = TITLE_FONT
@@ -332,37 +308,29 @@ def build_workbook(cash, slip):
     r = hrow(sm, 4, ["Branch", "Cashiers", "Total Bets", "Total Revokes", "Revoked Amount",
                      "Avg Bets / Cashier", "Avg Revokes / Cashier", "Total Betslips", "GW Margin %"],
              [16, 11, 14, 14, 16, 17, 19, 14, 13])
-    bf = r
-    counts = cs.groupby("Shop")["Cashier"].nunique().to_dict()
     for br in BRANCHES:
-        sm.cell(row=r, column=1, value=br).font = BODY
-        sm.cell(row=r, column=2, value=int(counts.get(br, 0))).number_format = INT_FMT
-        sm.cell(row=r, column=3, value=f'=SUMIFS({CD_B},{CD},$A{r})').number_format = INT_FMT
-        sm.cell(row=r, column=4, value=f'=SUMIFS({CD_R},{CD},$A{r})').number_format = INT_FMT
-        sm.cell(row=r, column=5, value=f'=SUMIFS({CD_RS},{CD},$A{r})').number_format = MON_FMT
-        sm.cell(row=r, column=6, value=f'=IFERROR(C{r}/B{r},0)').number_format = INT_FMT
-        sm.cell(row=r, column=7, value=f'=IFERROR(D{r}/B{r},0)').number_format = '#,##0.0;(#,##0.0);-'
-        sm.cell(row=r, column=8, value=f'=SUMIFS({SD_SL},{SD_SH},$A{r})').number_format = INT_FMT
-        sm.cell(row=r, column=9,
-                value=f'=IFERROR(SUMIFS({SD_NW},{SD_SH},$A{r})/SUMIFS({SD_IN},{SD_SH},$A{r})*100,0)').number_format = PCT_FMT
-        for c in range(1, 10):
-            sm.cell(row=r, column=c).border = BOX; sm.cell(row=r, column=c).font = BODY
+        sub = cs[cs["Shop"] == br]; subs = slip[slip["Shop"] == br]
+        ncash = int(sub["Cashier"].nunique()); bets = int(sub["Bets"].sum()); revs = int(sub["Revokes"].sum())
+        rsum = float(sub["RevSum"].sum()); paidin = float(subs["PaidIn"].sum()); netwin = float(subs["NetWin"].sum())
+        gw = round(netwin / paidin * 100, 2) if paidin else 0
+        put(sm, r, 1, br); put(sm, r, 2, ncash, INT_FMT)
+        put(sm, r, 3, bets, INT_FMT); put(sm, r, 4, revs, INT_FMT); put(sm, r, 5, rsum, MON_FMT)
+        put(sm, r, 6, round(bets / ncash, 0) if ncash else 0, INT_FMT)
+        put(sm, r, 7, round(revs / ncash, 1) if ncash else 0, '#,##0.0;(#,##0.0);-')
+        put(sm, r, 8, int(subs["BetSlips"].sum()), INT_FMT); put(sm, r, 9, gw, PCT_FMT)
         r += 1
-    bl = r - 1
-    sm.cell(row=r, column=1, value="ALL BRANCHES").font = LBL_FONT
-    for c in (2, 3, 4, 5, 8):
-        L = get_column_letter(c)
-        cell = sm.cell(row=r, column=c, value=f'=SUM({L}{bf}:{L}{bl})')
-        cell.number_format = MON_FMT if c == 5 else INT_FMT
-    sm.cell(row=r, column=6, value=f'=IFERROR(C{r}/B{r},0)').number_format = INT_FMT
-    sm.cell(row=r, column=7, value=f'=IFERROR(D{r}/B{r},0)').number_format = '#,##0.0;(#,##0.0);-'
-    sm.cell(row=r, column=9, value=f'=IFERROR(SUM({SD_NW})/SUM({SD_IN})*100,0)').number_format = PCT_FMT
-    for c in range(1, 10):
-        sm.cell(row=r, column=c).fill = SUB_FILL; sm.cell(row=r, column=c).border = BOX
-        sm.cell(row=r, column=c).font = LBL_FONT
+    tcash = int(cs["Cashier"].nunique()); tbets = int(cs["Bets"].sum()); trev = int(cs["Revokes"].sum())
+    trsum = float(cs["RevSum"].sum()); tslip = int(slip["BetSlips"].sum())
+    tin = float(slip["PaidIn"].sum()); tnw = float(slip["NetWin"].sum()); tgw = round(tnw / tin * 100, 2) if tin else 0
+    put(sm, r, 1, "ALL BRANCHES", font=LBL_FONT, fill=SUB_FILL)
+    put(sm, r, 2, tcash, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 3, tbets, INT_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, 4, trev, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 5, trsum, MON_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, 6, round(tbets / tcash, 0) if tcash else 0, INT_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, 7, round(trev / tcash, 1) if tcash else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
+    put(sm, r, 8, tslip, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 9, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
     r += 3
 
-    csn = cs[~cs["IsMgr"]]
+    csn = cs[~cs["IsMgr"]] if "IsMgr" in cs.columns else cs
     csn = csn if len(csn) else cs
     mb = cs.loc[cs["Bets"].idxmax()]; lb = csn.loc[csn["Bets"].idxmin()]
     mr = csn.loc[csn["Revokes"].idxmax()]; ma = csn.loc[csn["RevSum"].idxmax()]
@@ -370,7 +338,7 @@ def build_workbook(cash, slip):
     sm.cell(row=r, column=1, value="Overall highlights (all branches)").font = LBL_FONT
     r += 1
     r = hrow(sm, r, ["Measure", "Cashier / Game", "Branch", "Value"], [40, 28, 16, 18])
-    for lab, who, brc, val, fmt in [
+    for label, who, brc, val, fmt in [
         ("Most bets — cashier", mb["Cashier"], mb["Shop"], int(mb["Bets"]), INT_FMT),
         ("Least bets — cashier (managers excluded)", lb["Cashier"], lb["Shop"], int(lb["Bets"]), INT_FMT),
         ("Most revokes — cashier (managers excluded)", mr["Cashier"], mr["Shop"], int(mr["Revokes"]), INT_FMT),
@@ -378,14 +346,12 @@ def build_workbook(cash, slip):
         ("Highest revoked amount (managers excluded)", ma["Cashier"], ma["Shop"], float(ma["RevSum"]), MON_FMT),
         ("Game with most bets", gtop["Game"], "All branches", int(gtop["Bets"]), INT_FMT),
     ]:
-        sm.cell(row=r, column=1, value=lab).font = BODY
-        if who is not None:
-            sm.cell(row=r, column=2, value=who).font = BODY
-        if brc is not None:
-            sm.cell(row=r, column=3, value=brc).font = BODY
-        c = sm.cell(row=r, column=4, value=val); c.font = BODY; c.number_format = fmt
-        for cc in range(1, 5):
-            sm.cell(row=r, column=cc).border = BOX
+        put(sm, r, 1, label)
+        if who is not None: put(sm, r, 2, who)
+        else: sm.cell(row=r, column=2).border = BOX
+        if brc is not None: put(sm, r, 3, brc)
+        else: sm.cell(row=r, column=3).border = BOX
+        put(sm, r, 4, val, fmt)
         r += 1
     r += 1
     sm.cell(row=r, column=1,
