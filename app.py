@@ -92,6 +92,7 @@ def prep_slip(df):
     d["BetSlips"] = num(d["Bet Slips"])
     d["PaidIn"] = num(d["Paid In"])
     d["NetWin"] = num(d["Net Win"])
+    d["GWpct"] = num(d["GW Margin %"]) if "GW Margin %" in d.columns else 0.0
     for src, dst in (("First Slip Issued", "FirstDT"), ("Last Slip Issued", "LastDT")):
         parsed = pd.to_datetime(d[src], format="%d/%m/%y %H:%M:%S", errors="coerce")
         if parsed.isna().all():
@@ -102,6 +103,23 @@ def prep_slip(df):
 
 def money(v):
     return f"R {v:,.2f}"
+
+
+def gw_margin(sub):
+    """GW Margin %: weighted average of the source GW Margin % column, weighted by
+    Paid In. Uses Aardvark's own per-row figure rather than recomputing (the raw
+    columns don't reconstruct GW% reliably). Net Win Margin is Net Win / Paid In."""
+    w = sub["PaidIn"].sum()
+    if w == 0:
+        return 0.0
+    return round((sub["GWpct"] * sub["PaidIn"]).sum() / w, 2)
+
+
+def nwm_margin(sub):
+    pin = sub["PaidIn"].sum()
+    if pin == 0:
+        return 0.0
+    return round(sub["NetWin"].sum() / pin * 100, 2)
 
 
 # ================================================================= EXCEL
@@ -292,23 +310,21 @@ def build_workbook(cash, slip):
     for br in BRANCHES:
         sub = slip[slip["Shop"] == br]
         betslips = int(sub["BetSlips"].sum()); paidin = float(sub["PaidIn"].sum()); netwin = float(sub["NetWin"].sum())
-        gw = round(netwin / paidin * 100, 2) if paidin else 0
         put(sl, r, 1, br); put(sl, r, 2, betslips, INT_FMT)
         put(sl, r, 3, paidin, MON_FMT); put(sl, r, 4, netwin, MON_FMT)
-        put(sl, r, 5, gw, PCT_FMT); put(sl, r, 6, gw, PCT_FMT)
+        put(sl, r, 5, gw_margin(sub), PCT_FMT); put(sl, r, 6, nwm_margin(sub), PCT_FMT)
         fd, ld = sub["FirstDT"].min(), sub["LastDT"].max()
         c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None)
         c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None)
         c7.number_format = "dd/mm/yyyy hh:mm"; c8.number_format = "dd/mm/yyyy hh:mm"
         r += 1
     tb = int(slip["BetSlips"].sum()); tin = float(slip["PaidIn"].sum()); tnw = float(slip["NetWin"].sum())
-    tgw = round(tnw / tin * 100, 2) if tin else 0
     put(sl, r, 1, "ALL BRANCHES", font=LBL_FONT, fill=SUB_FILL)
     put(sl, r, 2, tb, INT_FMT, LBL_FONT, SUB_FILL)
     put(sl, r, 3, tin, MON_FMT, LBL_FONT, SUB_FILL)
     put(sl, r, 4, tnw, MON_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 5, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 6, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 5, gw_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
+    put(sl, r, 6, nwm_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
     fd, ld = slip["FirstDT"].min(), slip["LastDT"].max()
     c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None, font=LBL_FONT, fill=SUB_FILL)
     c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None, font=LBL_FONT, fill=SUB_FILL)
@@ -325,23 +341,21 @@ def build_workbook(cash, slip):
     for br in BRANCHES:
         sub = cs[cs["Shop"] == br]; subs = slip[slip["Shop"] == br]
         ncash = int(sub["Cashier"].nunique()); bets = int(sub["Bets"].sum()); revs = int(sub["Revokes"].sum())
-        rsum = float(sub["RevSum"].sum()); paidin = float(subs["PaidIn"].sum()); netwin = float(subs["NetWin"].sum())
-        gw = round(netwin / paidin * 100, 2) if paidin else 0
+        rsum = float(sub["RevSum"].sum())
         put(sm, r, 1, br); put(sm, r, 2, ncash, INT_FMT)
         put(sm, r, 3, bets, INT_FMT); put(sm, r, 4, revs, INT_FMT); put(sm, r, 5, rsum, MON_FMT)
         put(sm, r, 6, round(bets / ncash, 0) if ncash else 0, INT_FMT)
         put(sm, r, 7, round(revs / ncash, 1) if ncash else 0, '#,##0.0;(#,##0.0);-')
-        put(sm, r, 8, int(subs["BetSlips"].sum()), INT_FMT); put(sm, r, 9, gw, PCT_FMT)
+        put(sm, r, 8, int(subs["BetSlips"].sum()), INT_FMT); put(sm, r, 9, gw_margin(subs), PCT_FMT)
         r += 1
     tcash = int(cs["Cashier"].nunique()); tbets = int(cs["Bets"].sum()); trev = int(cs["Revokes"].sum())
     trsum = float(cs["RevSum"].sum()); tslip = int(slip["BetSlips"].sum())
-    tin = float(slip["PaidIn"].sum()); tnw = float(slip["NetWin"].sum()); tgw = round(tnw / tin * 100, 2) if tin else 0
     put(sm, r, 1, "ALL BRANCHES", font=LBL_FONT, fill=SUB_FILL)
     put(sm, r, 2, tcash, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 3, tbets, INT_FMT, LBL_FONT, SUB_FILL)
     put(sm, r, 4, trev, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 5, trsum, MON_FMT, LBL_FONT, SUB_FILL)
     put(sm, r, 6, round(tbets / tcash, 0) if tcash else 0, INT_FMT, LBL_FONT, SUB_FILL)
     put(sm, r, 7, round(trev / tcash, 1) if tcash else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
-    put(sm, r, 8, tslip, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 9, tgw, PCT_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, 8, tslip, INT_FMT, LBL_FONT, SUB_FILL); put(sm, r, 9, gw_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
     r += 3
 
     csn = cs[~cs["IsMgr"]] if "IsMgr" in cs.columns else cs
@@ -450,7 +464,7 @@ k1.metric("Total bets", f"{int(cash['Bets'].sum()):,}")
 k2.metric("Total revokes", f"{int(cash['Revokes'].sum()):,}")
 k3.metric("Revoked amount", money(cash["RevokedSum"].sum()))
 k4.metric("Total betslips", f"{int(slip['BetSlips'].sum()):,}")
-gw = slip["NetWin"].sum() / slip["PaidIn"].sum() * 100 if slip["PaidIn"].sum() else 0
+gw = gw_margin(slip)
 k5.metric("GW margin", f"{gw:.2f}%")
 
 st.divider()
@@ -467,7 +481,7 @@ with tab_over:
     bo["Avg revokes/cashier"] = (bo["Revokes"] / bo["Cashiers"]).round(1)
     sb = slip.groupby("Shop", as_index=False).agg(
         Betslips=("BetSlips", "sum"), PaidIn=("PaidIn", "sum"), NetWin=("NetWin", "sum"))
-    sb["GW margin %"] = (sb["NetWin"] / sb["PaidIn"] * 100).round(2)
+    sb["GW margin %"] = sb["Shop"].map(lambda b: gw_margin(slip[slip["Shop"] == b]))
     bo = bo.merge(sb[["Shop", "Betslips", "GW margin %"]], on="Shop", how="left")
     bo = bo.rename(columns={"Shop": "Branch", "RevSum": "Revoked amount"})
     st.dataframe(
@@ -585,8 +599,8 @@ with tab_slip:
     ss = slip.groupby("Shop", as_index=False).agg(
         Betslips=("BetSlips", "sum"), PaidIn=("PaidIn", "sum"), NetWin=("NetWin", "sum"),
         First=("FirstDT", "min"), Last=("LastDT", "max"))
-    ss["GW margin %"] = (ss["NetWin"] / ss["PaidIn"] * 100).round(2)
-    ss["Net win margin %"] = ss["GW margin %"]
+    ss["GW margin %"] = ss["Shop"].map(lambda b: gw_margin(slip[slip["Shop"] == b]))
+    ss["Net win margin %"] = ss["Shop"].map(lambda b: nwm_margin(slip[slip["Shop"] == b]))
     ss = ss.rename(columns={"Shop": "Branch", "PaidIn": "Paid in", "NetWin": "Net win",
                             "First": "First slip issued", "Last": "Last slip issued"})
     st.dataframe(ss[["Branch", "Betslips", "Paid in", "Net win", "GW margin %",
