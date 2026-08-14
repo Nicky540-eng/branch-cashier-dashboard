@@ -52,10 +52,53 @@ def num(s):
 def load_csv(f):
     f.seek(0)
     try:
-        return pd.read_csv(f, encoding="utf-8-sig")
+        df = pd.read_csv(f, encoding="utf-8-sig")
     except UnicodeDecodeError:
         f.seek(0)
-        return pd.read_csv(f, encoding="latin-1")
+        df = pd.read_csv(f, encoding="latin-1")
+    return canon_columns(df)
+
+
+def canon_columns(df):
+    """Map common header variations to the exact names the report expects, so exports
+    from different months / slightly different configs still work. Matching is done on a
+    squashed key (lowercased, spaces/underscores/dashes removed) against known aliases."""
+    aliases = {
+        # target -> list of accepted variants (do NOT cross-map Cashier<->User:
+        # the cash file uses "Cashier", the slip file uses "User"; keep them distinct)
+        "Cashier": ["cashiername", "teller", "operator"],
+        "User": ["username"],
+        "Shop": ["branch", "shopname", "branchname", "store", "location"],
+        "Game": ["gamename", "product"],
+        "Bet Slips": ["betslip", "betslips", "slips", "totalbetslips", "numberofbetslips"],
+        "Paid In": ["paidinsum", "totalpaidin", "stakes", "turnover"],
+        "Net Win": ["netwinsum", "netwinnings"],
+        "GW Margin %": ["gwmargin", "grosswinmargin", "grosswinmarginpct", "gwmarginpct"],
+        "Net Win Margin": ["netwinmarginpct", "nwmargin"],
+        "Winnings - Unpaid": ["winningsunpaid", "unpaidwinnings", "unpaid", "winningsminusunpaid"],
+        "Paid Out - Revoked Count": ["paidoutrevokedcount", "revokedcount", "revokecount",
+                                     "paidoutrevoked"],
+        "Revoked Sum": ["revokedamount", "revokeamount", "revokedtotal"],
+        "Paid Out": ["paidoutsum", "payout", "payouts"],
+        "First Slip Issued": ["firstslip", "firstissued"],
+        "Last Slip Issued": ["lastslip", "lastissued"],
+    }
+
+    def squash(x):
+        return "".join(ch for ch in str(x).lower() if ch.isalnum())
+
+    present = {squash(c): c for c in df.columns}
+    rename = {}
+    for target, variants in aliases.items():
+        if target in df.columns:
+            continue  # already exactly right
+        for v in variants:
+            if squash(v) in present:
+                rename[present[squash(v)]] = target
+                break
+    if rename:
+        df = df.rename(columns=rename)
+    return df
 
 
 def missing(df, cols):
@@ -228,7 +271,9 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
         ll.cell(row=i, column=8, value=g)       # H: game
         ll.cell(row=i, column=9, value=name)    # I: cashier
     # Col C: games for the SELECTED cashier (card B9), packed to top.
-    maxg = 20
+    from collections import Counter as _Counter
+    _gc = _Counter(name for (g, name) in cg_pairs)
+    maxg = max(max(_gc.values()) if _gc else 1, 1)
     for k in range(maxg):
         f = (f"IFERROR(INDEX({lname}!$H$1:$H${Grow},"
              f"SMALL(IF({lname}!$I$1:$I${Grow}='{title}'!$B$9,ROW({lname}!$I$1:$I${Grow})),{k+1})),\"\")")
@@ -652,6 +697,16 @@ def build_workbook(cash, slip):
     # remove the blank starter sheet openpyxl created
     if _starter in wb.worksheets:
         wb.remove(_starter)
+
+    # Force Excel to fully recalculate when the file opens, so the dependent-dropdown
+    # array formulas (shop -> cashier -> game) populate immediately instead of showing
+    # an empty list until a manual recalc.
+    try:
+        wb.calculation.calcMode = "auto"
+        wb.calculation.fullCalcOnLoad = True
+    except Exception:
+        from openpyxl.workbook.properties import CalcProperties
+        wb.calculation = CalcProperties(calcMode="auto", fullCalcOnLoad=True)
 
     buf = io.BytesIO()
     wb.save(buf)
