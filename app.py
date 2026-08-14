@@ -187,49 +187,91 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
     Ndd = len(rows) + 1
     dd.sheet_state = "hidden"
 
-    cashiers = sorted({r[0] for r in rows if r[0]})
+    shops = sorted({r[1] for r in rows if r[1]})
     lname = data_key + "_lists"
     ll = wb.create_sheet(lname)
-    for i, n in enumerate(cashiers, 1):
-        ll.cell(row=i, column=1, value=n)
+    # col A: all shops (shop dropdown source)
+    for i, sh in enumerate(shops, 1):
+        ll.cell(row=i, column=1, value=sh)
+
+    # Master cashier+shop table on the lists sheet (cols E, F) so formulas can filter it.
+    # Distinct cashiers per shop, in shop order.
+    from collections import defaultdict
+    shop_cashiers = {}
+    for sh in shops:
+        shop_cashiers[sh] = sorted({r[0] for r in rows if r[1] == sh and r[0]})
+    master = []  # (cashier, shop)
+    for sh in shops:
+        for name in shop_cashiers[sh]:
+            master.append((name, sh))
+    Mrow = len(master)
+    for i, (name, sh) in enumerate(master, 1):
+        ll.cell(row=i, column=5, value=name)   # E: cashier
+        ll.cell(row=i, column=6, value=sh)      # F: shop
+
+    # Col B: cashiers for the SELECTED shop, packed to the top (no blanks between).
+    # Uses IFERROR+SMALL+IF over the master table — reads the shop from the card's B6.
+    maxc = max(len(v) for v in shop_cashiers.values()) if shop_cashiers else 1
+    for k in range(maxc):
+        f = (f"IFERROR(INDEX({lname}!$E$1:$E${Mrow},"
+             f"SMALL(IF({lname}!$F$1:$F${Mrow}='{title}'!$B$6,ROW({lname}!$F$1:$F${Mrow})),{k+1})),\"\")")
+        ll[f'B{1+k}'] = ArrayFormula(f'B{1+k}', f'={f}')
+
+    # Master cashier+game table (cols H, I) for the game dropdown.
+    cg_pairs = []
+    seen = set()
+    for r in rows:
+        if r[0] and r[2] and (r[0], r[2]) not in seen:
+            seen.add((r[0], r[2])); cg_pairs.append((r[2], r[0]))  # (game, cashier)
+    Grow = len(cg_pairs)
+    for i, (g, name) in enumerate(cg_pairs, 1):
+        ll.cell(row=i, column=8, value=g)       # H: game
+        ll.cell(row=i, column=9, value=name)    # I: cashier
+    # Col C: games for the SELECTED cashier (card B9), packed to top.
     maxg = 20
     for k in range(maxg):
-        f = (f"IFERROR(INDEX({dname}!$C$2:$C${Ndd},SMALL(IF({dname}!$A$2:$A${Ndd}='{title}'!$B$6,"
-             f"ROW({dname}!$A$2:$A${Ndd})-1),{k+1})),\"\")")
+        f = (f"IFERROR(INDEX({lname}!$H$1:$H${Grow},"
+             f"SMALL(IF({lname}!$I$1:$I${Grow}='{title}'!$B$9,ROW({lname}!$I$1:$I${Grow})),{k+1})),\"\")")
         ll[f'C{1+k}'] = ArrayFormula(f'C{1+k}', f'={f}')
     ll.sheet_state = "hidden"
 
     ws = wb.create_sheet(title)
     ws.sheet_view.showGridLines = False
-    for col, w in zip('ABCDEFGH', [3, 22, 22, 18, 18, 4, 3, 3]):
-        ws.column_dimensions[col].width = w
+    for col_, w in zip('ABCDEFGH', [3, 22, 22, 18, 18, 4, 3, 3]):
+        ws.column_dimensions[col_].width = w
     ws.merge_cells('B2:E3')
     t = ws['B2']; t.value = title; t.font = TITLEF; t.fill = NAVY
     t.alignment = Alignment(vertical="center", horizontal="left", indent=1)
     for cc in ['B2','C2','D2','E2','B3','C3','D3','E3']:
         ws[cc].fill = NAVY
-    ws['B5'] = "CASHIER"; ws['B5'].font = LBL
-    ws['D5'] = "GAME"; ws['D5'].font = LBL
-    b6 = ws['B6']; b6.value = cashiers[0] if cashiers else ""
+    # Row 5/6: SHOP selector
+    ws['B5'] = "SHOP"; ws['B5'].font = LBL
+    b6 = ws['B6']; b6.value = shops[0] if shops else ""
     b6.fill = PICKF; b6.font = Font(name=FONT, bold=True, size=12); b6.border = BOXM
     b6.alignment = Alignment(indent=1, vertical="center")
     ws.merge_cells('B6:C6')
-    dvA = DataValidation(type="list", formula1=f"={lname}!$A$1:$A${len(cashiers)}", allow_blank=False)
-    ws.add_data_validation(dvA); dvA.add(b6)
-    d6 = ws['D6']; d6.fill = PICKF; d6.font = Font(name=FONT, bold=True, size=12); d6.border = BOXM
-    d6.alignment = Alignment(indent=1, vertical="center")
-    ws.merge_cells('D6:E6')
-    dvC = DataValidation(type="list", formula1=f"={lname}!$C$1:$C${maxg}", allow_blank=True)
-    ws.add_data_validation(dvC); dvC.add(d6)
+    dvS = DataValidation(type="list", formula1=f"={lname}!$A$1:$A${len(shops)}", allow_blank=False)
+    ws.add_data_validation(dvS); dvS.add(b6)
     ws.row_dimensions[6].height = 24
-    ws['B8'] = "Shop"; ws['B8'].font = Font(name=FONT, size=10, color="595959")
-    ws['B9'] = f'=IFERROR(INDEX({dname}!$B$2:$B${Ndd},MATCH($B$6,{dname}!$A$2:$A${Ndd},0)),"")'
-    ws['B9'].font = Font(name=FONT, bold=True, size=13, color="1F3864")
+    # Row 8/9: CASHIER selector (fixed helper range B), GAME selector (fixed helper range C).
+    ws['B8'] = "CASHIER"; ws['B8'].font = LBL
+    ws['D8'] = "GAME"; ws['D8'].font = LBL
+    b9 = ws['B9']; b9.fill = PICKF; b9.font = Font(name=FONT, bold=True, size=12); b9.border = BOXM
+    b9.alignment = Alignment(indent=1, vertical="center")
+    ws.merge_cells('B9:C9')
+    dvA = DataValidation(type="list", formula1=f"={lname}!$B$1:$B${maxc}", allow_blank=True)
+    ws.add_data_validation(dvA); dvA.add(b9)
+    d9 = ws['D9']; d9.fill = PICKF; d9.font = Font(name=FONT, bold=True, size=12); d9.border = BOXM
+    d9.alignment = Alignment(indent=1, vertical="center")
+    ws.merge_cells('D9:E9')
+    dvC = DataValidation(type="list", formula1=f"={lname}!$C$1:$C${maxg}", allow_blank=True)
+    ws.add_data_validation(dvC); dvC.add(d9)
+    ws.row_dimensions[9].height = 24
 
-    # value cards — up to 5 across cols B,C,D,E,B(row2)...
-    key = '$B$6&"|"&$D$6'
+    # value cards — cashier is B9, game is D9. Stat boxes start at row 12.
+    key = '$B$9&"|"&$D$9'
     positions = ['B', 'C', 'D', 'E', 'B', 'C', 'D']
-    rowsets = [(11, 12), (11, 12), (11, 12), (11, 12), (14, 15), (14, 15), (14, 15)]
+    rowsets = [(12, 13), (12, 13), (12, 13), (12, 13), (15, 16), (15, 16), (15, 16)]
     for idx, (lbl, fmt) in enumerate(value_specs):
         col = positions[idx]; lr, vr = rowsets[idx]
         datacol = get_column_letter(4 + idx)  # D onward in data sheet
@@ -237,18 +279,18 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
         l.fill = NAVY; l.alignment = Alignment(horizontal="center")
         v = ws[f'{col}{vr}']
         if fmt == PCTf:
-            v.value = (f'=IF($D$6="","",IFERROR(INDEX({dname}!${datacol}$2:${datacol}${Ndd},'
+            v.value = (f'=IF($D$9="","",IFERROR(INDEX({dname}!${datacol}$2:${datacol}${Ndd},'
                        f'MATCH({key},INDEX({dname}!$A$2:$A${Ndd}&"|"&{dname}!$C$2:$C${Ndd},0),0)),0))')
         else:
-            v.value = (f'=IF($D$6="","",SUMIFS({dname}!${datacol}$2:${datacol}${Ndd},'
-                       f'{dname}!$A$2:$A${Ndd},$B$6,{dname}!$C$2:$C${Ndd},$D$6))')
+            v.value = (f'=IF($D$9="","",SUMIFS({dname}!${datacol}$2:${datacol}${Ndd},'
+                       f'{dname}!$A$2:$A${Ndd},$B$9,{dname}!$C$2:$C${Ndd},$D$9))')
         v.number_format = fmt; v.font = BIG; v.fill = CARD
         v.alignment = Alignment(horizontal="center", vertical="center"); v.border = BOXT
         ws.row_dimensions[vr].height = 30
         if fmt == PCTf:
             _margin_cf(ws, f'{col}{vr}')
-    ws['B17'] = "Pick a cashier, then a game — only games she worked show. Green = positive, red = negative."
-    ws['B17'].font = Font(name=FONT, italic=True, size=9, color="808080")
+    ws['B18'] = "Pick a shop, then a cashier (only that shop's cashiers show), then a game. Green = positive, red = negative."
+    ws['B18'].font = Font(name=FONT, italic=True, size=9, color="808080")
     return ws
 
 
@@ -329,33 +371,24 @@ def build_workbook(cash, slip):
         r = 3
         s.cell(row=r, column=1, value="Cashier performance").font = LBL_FONT
         r += 1
-        r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount",
-                        "GW Margin %", "Net Win Margin %"], [30, 14, 15, 18, 14, 16])
+        r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount"], [30, 14, 15, 18])
         sub = cs[cs["Shop"] == br].sort_values("Bets", ascending=False)
-        cash_first = r
         for _, row_ in sub.iterrows():
             put(s, r, 1, row_["Cashier"])
             put(s, r, 2, int(row_["Bets"]), INT_FMT)
             put(s, r, 3, int(row_["Revokes"]), INT_FMT)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
-            put(s, r, 5, float(row_["GWpct"]), PCT_FMT)
-            put(s, r, 6, float(row_["NWM"]), PCT_FMT)
             r += 1
-        if r > cash_first:
-            _margin_cf(s, f"E{cash_first}:F{r-1}")
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 6, nwm_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
         r += 1
         put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, round(float(sub["Bets"].mean()), 0) if len(sub) else 0, INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 3, round(float(sub["Revokes"].mean()), 1) if len(sub) else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
         put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 5, "", fill=SUB_FILL); put(s, r, 6, "", fill=SUB_FILL)
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
         WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
@@ -389,7 +422,7 @@ def build_workbook(cash, slip):
         r = hrow(s, r, ["Game", "Bets", "Revokes", "Revoked Amount",
                         "GW Margin %", "Net Win Margin %"], [30, 14, 15, 18, 14, 16])
         gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
-        game_first = r
+        gfirst = r
         for _, row_ in gsub.iterrows():
             put(s, r, 1, row_["Game"])
             put(s, r, 2, int(row_["Bets"]), INT_FMT)
@@ -398,8 +431,9 @@ def build_workbook(cash, slip):
             put(s, r, 5, float(row_["GWpct"]), PCT_FMT)
             put(s, r, 6, float(row_["NWM"]), PCT_FMT)
             r += 1
-        if r > game_first:
-            _margin_cf(s, f"E{game_first}:F{r-1}")
+        if r > gfirst:
+            _margin_cf(s, f"E{gfirst}:F{r-1}")
+        brf = cash[cash["Shop"] == br]
         put(s, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
@@ -409,13 +443,15 @@ def build_workbook(cash, slip):
         r += 2
         if len(gsub):
             gb = gsub.loc[gsub["Bets"].idxmax()]; gr = gsub.loc[gsub["Revokes"].idxmax()]
-            put(s, r, 1, "Game with most bets", font=LBL_FONT, border=False)
-            put(s, r, 2, gb["Game"], border=False)
-            put(s, r, 3, int(gb["Bets"]), INT_FMT, border=False)
+            BRIGHT = PatternFill("solid", fgColor="FFEB00")  # bright yellow
+            BLKB = Font(name="Calibri", bold=True, color="000000")
+            put(s, r, 1, "Game with most bets", font=BLKB, fill=BRIGHT)
+            put(s, r, 2, gb["Game"], font=BLKB, fill=BRIGHT)
+            put(s, r, 3, int(gb["Bets"]), INT_FMT, BLKB, BRIGHT)
             r += 1
-            put(s, r, 1, "Game with most revokes", font=LBL_FONT, border=False)
-            put(s, r, 2, gr["Game"], border=False)
-            put(s, r, 3, int(gr["Revokes"]), INT_FMT, border=False)
+            put(s, r, 1, "Game with most revokes", font=BLKB, fill=BRIGHT)
+            put(s, r, 2, gr["Game"], font=BLKB, fill=BRIGHT)
+            put(s, r, 3, int(gr["Revokes"]), INT_FMT, BLKB, BRIGHT)
         s.freeze_panes = "A4"
 
     ac = wb.create_sheet("All Cashiers")
@@ -558,8 +594,6 @@ def build_workbook(cash, slip):
 
     sm = wb.create_sheet("Summary", 0)
     sm.cell(row=1, column=1, value="Branch & Cashier Performance").font = TITLE_FONT
-    sm.cell(row=2, column=1,
-            value=f"Generated {datetime.now():%d %b %Y %H:%M} from the Cash Operations and Slip Summary reports.").font = NOTE_F
     r = hrow(sm, 4, ["Branch", "Cashiers", "Total Bets", "Total Revokes", "Revoked Amount",
                      "Avg Bets / Cashier", "Avg Revokes / Cashier", "Total Betslips",
                      "GW Margin %", "Net Win Margin %"],
@@ -613,14 +647,6 @@ def build_workbook(cash, slip):
         else: sm.cell(row=r, column=3).border = BOX
         put(sm, r, 4, val, fmt)
         r += 1
-    r += 1
-    sm.cell(row=r, column=1,
-            value='Definitions — "Bets" = Bet Slips (from the Slip report, matching Aardvark). "Revokes" = Paid Out Revoked Count. '
-                  '"Revoked Amount" = Revoked Sum. Margins = Net Win / Paid In from the Slip report.').font = NOTE_F
-    r += 1
-    sm.cell(row=r, column=1,
-            value='Manager accounts are excluded from "most revokes", "least bets" and '
-                  '"highest revoked amount" (revokes are manager-authorised). They remain in the cashier lists.').font = NOTE_F
     sm.freeze_panes = "A5"
 
     # remove the blank starter sheet openpyxl created
