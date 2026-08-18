@@ -39,6 +39,7 @@ PCT_FMT = '0.00"%";-0.00"%";-'
 
 CASH_REQUIRED = ["Cashier", "Shop", "Game",
                  "Paid Out - Revoked Count", "Revoked Sum"]
+# "Paid Out Sum" is optional; pulled in when present for the paid-out highlight.
 SLIP_REQUIRED = ["Game", "Shop", "User", "Bet Slips", "First Slip Issued",
                  "Last Slip Issued", "Paid In", "Net Win"]
 
@@ -79,7 +80,8 @@ def canon_columns(df):
         "Paid Out - Revoked Count": ["paidoutrevokedcount", "revokedcount", "revokecount",
                                      "paidoutrevoked"],
         "Revoked Sum": ["revokedamount", "revokeamount", "revokedtotal"],
-        "Paid Out": ["paidoutsum", "payout", "payouts"],
+        "Paid Out": ["payout", "payouts"],
+        "Paid Out Sum": ["paidoutsum"],
         "First Slip Issued": ["firstslip", "firstissued"],
         "Last Slip Issued": ["lastslip", "lastissued"],
     }
@@ -114,8 +116,10 @@ def prep_cash(cash_df, slip_df, drop_managers):
     c = cash_df.copy()
     c["Revokes"] = num(c["Paid Out - Revoked Count"])
     c["RevokedSum"] = num(c["Revoked Sum"])
+    c["PaidOut"] = num(c["Paid Out Sum"]) if "Paid Out Sum" in c.columns else 0.0
     c = c.groupby(["Shop", "Cashier", "Game"], as_index=False).agg(
-        Revokes=("Revokes", "sum"), RevokedSum=("RevokedSum", "sum"))
+        Revokes=("Revokes", "sum"), RevokedSum=("RevokedSum", "sum"),
+        PaidOut=("PaidOut", "sum"))
 
     sp = slip_df.copy()
     sp["Bets"] = num(sp["Bet Slips"])
@@ -128,8 +132,9 @@ def prep_cash(cash_df, slip_df, drop_managers):
     sp = sp.rename(columns={"User": "Cashier"})
 
     d = pd.merge(sp, c, on=["Shop", "Cashier", "Game"], how="outer")
-    for col in ("Bets", "Revokes", "RevokedSum", "PaidIn", "NetWin", "Unpaid"):
-        d[col] = d[col].fillna(0)
+    for col in ("Bets", "Revokes", "RevokedSum", "PaidIn", "NetWin", "Unpaid", "PaidOut"):
+        if col in d.columns:
+            d[col] = d[col].fillna(0)
     d["IsManager"] = d["Cashier"].astype(str).str.contains("manager", case=False, na=False)
     if drop_managers:
         d = d[~d["IsManager"]]
@@ -348,7 +353,10 @@ def build_workbook(cash, slip):
     cs = cash.groupby(["Shop", "Cashier"], as_index=False).agg(
         Bets=("Bets", "sum"), Revokes=("Revokes", "sum"), RevSum=("RevokedSum", "sum"),
         PaidIn=("PaidIn", "sum"), NetWin=("NetWin", "sum"), Unpaid=("Unpaid", "sum"),
+        PaidOut=("PaidOut", "sum") if "PaidOut" in cash.columns else ("Bets", "sum"),
         IsMgr=("IsManager", "max"))
+    if "PaidOut" not in cash.columns:
+        cs["PaidOut"] = 0.0
     cs["GWpct"] = cs.apply(lambda r: round((r["NetWin"] - r["Unpaid"]) / r["PaidIn"] * 100, 2) if r["PaidIn"] else 0.0, axis=1)
     cs["NWM"] = cs.apply(lambda r: round(r["NetWin"] / r["PaidIn"] * 100, 2) if r["PaidIn"] else 0.0, axis=1)
     cg = cash.groupby(["Shop", "Game"], as_index=False).agg(
@@ -399,41 +407,52 @@ def build_workbook(cash, slip):
                      [("BETS", INTf), ("REVOKES", INTf), ("REVOKED SUM", MONf),
                       ("GW MARGIN %", PCTf), ("NET WIN MARGIN %", PCTf)])
 
-    # ---- Slip Lookup card (bet slips, paid in, net win, margins) ----
-    slipd = slip.copy()
-    slipd["GWp"] = slipd["GWpct"] if "GWpct" in slipd.columns else 0.0
-    slipd["NWMm"] = slipd["NWMraw"] if "NWMraw" in slipd.columns else 0.0
-    slip_rows = [[r["User"], r["Shop"], r["Game"], int(r["BetSlips"]), float(r["PaidIn"]),
-                  float(r["NetWin"]), float(r["GWp"]), float(r["NWMm"])]
-                 for _, r in slipd.iterrows() if r["BetSlips"] > 0]
-    _add_lookup_card(wb, "Slip Stats", "slip", slip_rows,
-                     [("BET SLIPS", INTf), ("PAID IN", MONf), ("NET WIN", MONf),
-                      ("GW MARGIN %", PCTf), ("NET WIN MARGIN %", PCTf)])
-
     for br in BRANCHES:
         s = wb.create_sheet(str(br)[:31])
         s.cell(row=1, column=1, value=f"{br} — Cashier & Game Report").font = TITLE_FONT
         r = 3
         s.cell(row=r, column=1, value="Cashier performance").font = LBL_FONT
         r += 1
-        r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount"], [30, 14, 15, 18])
+        r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount",
+                        "Paid Out Amount"], [30, 14, 15, 18, 16])
         sub = cs[cs["Shop"] == br].sort_values("Bets", ascending=False)
+        # Branch per-cashier averages drive the red/orange highlight thresholds.
+        avg_bets = float(sub["Bets"].mean()) if len(sub) else 0.0
+        avg_revokes = float(sub["Revokes"].mean()) if len(sub) else 0.0
+        # Highlight fills (black text inside every highlighted block).
+        BLUE_H = PatternFill("solid", fgColor="5B9BD5")    # paid out (darker blue)
+        RED_H = PatternFill("solid", fgColor="D0342C")     # below-avg bets (true red)
+        ORANGE_H = PatternFill("solid", fgColor="ED9C28")  # above-3 revokes (darker orange)
+        BLACKB = Font(name=FONT, size=10, color="000000")
         for _, row_ in sub.iterrows():
+            paid_out = float(row_.get("PaidOut", 0) or 0)
+            bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
+            # Per-cell highlights so every flag on a cashier shows at once:
+            #   paid out  -> blue on the Paid Out cell
+            #   below-avg bets -> red on the Bets cell
+            #   more than 3 revokes -> orange on the Revokes cell
+            bets_fill = RED_H if bets < avg_bets else None
+            rev_fill = ORANGE_H if revokes > 3 else None
+            po_fill = BLUE_H if paid_out > 0 else None
             put(s, r, 1, row_["Cashier"])
-            put(s, r, 2, int(row_["Bets"]), INT_FMT)
-            put(s, r, 3, int(row_["Revokes"]), INT_FMT)
+            put(s, r, 2, bets, INT_FMT, BLACKB if bets_fill else BODY, bets_fill)
+            put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
+            put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
+                BLACKB if po_fill else BODY, po_fill)
             r += 1
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 5, float(sub["PaidOut"].sum()) if "PaidOut" in sub.columns else None, MON_FMT, LBL_FONT, SUB_FILL)
         r += 1
         put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, fill=SUB_FILL)
-        put(s, r, 2, round(float(sub["Bets"].mean()), 0) if len(sub) else 0, INT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 3, round(float(sub["Revokes"].mean()), 1) if len(sub) else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
+        put(s, r, 2, round(avg_bets, 0), INT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
         put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 5, None, None, LBL_FONT, SUB_FILL)
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
         WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
@@ -465,7 +484,7 @@ def build_workbook(cash, slip):
         s.cell(row=r, column=1, value="Bets & revokes per game").font = LBL_FONT
         r += 1
         r = hrow(s, r, ["Game", "Bets", "Revokes", "Revoked Amount",
-                        "GW Margin %", "Net Win Margin %"], [30, 14, 15, 18, 14, 16])
+                        "GW Margin %"], [30, 14, 15, 18, 14])
         gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
         gfirst = r
         for _, row_ in gsub.iterrows():
@@ -474,17 +493,15 @@ def build_workbook(cash, slip):
             put(s, r, 3, int(row_["Revokes"]), INT_FMT)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
             put(s, r, 5, float(row_["GWpct"]), PCT_FMT)
-            put(s, r, 6, float(row_["NWM"]), PCT_FMT)
             r += 1
         if r > gfirst:
-            _margin_cf(s, f"E{gfirst}:F{r-1}")
+            _margin_cf(s, f"E{gfirst}:E{r-1}")
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 6, nwm_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
         r += 2
         if len(gsub):
             gb = gsub.loc[gsub["Bets"].idxmax()]; gr = gsub.loc[gsub["Revokes"].idxmax()]
@@ -590,59 +607,12 @@ def build_workbook(cash, slip):
     put(ac, r, 6, nwm_pct(cash), PCT_FMT, LBL_FONT, SUB_FILL)
     ac.freeze_panes = "A5"
 
-    bgs = wb.create_sheet("Bets per Game")
-    bgs.cell(row=1, column=1, value="Bets per Game — by Branch").font = TITLE_FONT
-    r = hrow(bgs, 3, ["Game"] + list(BRANCHES) + ["All Branches"], [26] + [16] * len(BRANCHES) + [16])
-    gpiv = cash.pivot_table(index="Game", columns="Shop", values="Bets", aggfunc="sum", fill_value=0)
-    gpiv["_all"] = gpiv.sum(axis=1)
-    gpiv = gpiv.sort_values("_all", ascending=False)
-    for game, row_ in gpiv.iterrows():
-        put(bgs, r, 1, game)
-        for i, br in enumerate(BRANCHES, start=2):
-            put(bgs, r, i, int(row_.get(br, 0)), INT_FMT)
-        put(bgs, r, len(BRANCHES) + 2, int(row_["_all"]), INT_FMT)
-        r += 1
-    put(bgs, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
-    for i, br in enumerate(BRANCHES, start=2):
-        put(bgs, r, i, int(gpiv[br].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-    put(bgs, r, len(BRANCHES) + 2, int(gpiv["_all"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-    bgs.freeze_panes = "B4"
-
-    sl = wb.create_sheet("Slip Summary")
-    sl.cell(row=1, column=1, value="Slip Report Summary — by Branch").font = TITLE_FONT
-    r = hrow(sl, 3, ["Branch", "Total Betslips", "Paid In", "Net Win", "GW Margin %",
-                     "Net Win Margin %", "First Slip Issued", "Last Slip Issued"],
-             [16, 16, 16, 16, 14, 16, 20, 20])
-    for br in BRANCHES:
-        sub = slip[slip["Shop"] == br]
-        betslips = int(sub["BetSlips"].sum()); paidin = float(sub["PaidIn"].sum()); netwin = float(sub["NetWin"].sum())
-        put(sl, r, 1, br); put(sl, r, 2, betslips, INT_FMT)
-        put(sl, r, 3, paidin, MON_FMT); put(sl, r, 4, netwin, MON_FMT)
-        put(sl, r, 5, gw_margin(sub), PCT_FMT); put(sl, r, 6, nwm_margin(sub), PCT_FMT)
-        fd, ld = sub["FirstDT"].min(), sub["LastDT"].max()
-        c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None)
-        c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None)
-        c7.number_format = "dd/mm/yyyy hh:mm"; c8.number_format = "dd/mm/yyyy hh:mm"
-        r += 1
-    tb = int(slip["BetSlips"].sum()); tin = float(slip["PaidIn"].sum()); tnw = float(slip["NetWin"].sum())
-    put(sl, r, 1, "ALL BRANCHES", font=LBL_FONT, fill=SUB_FILL)
-    put(sl, r, 2, tb, INT_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 3, tin, MON_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 4, tnw, MON_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 5, gw_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
-    put(sl, r, 6, nwm_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
-    fd, ld = slip["FirstDT"].min(), slip["LastDT"].max()
-    c7 = put(sl, r, 7, fd.to_pydatetime() if pd.notna(fd) else None, font=LBL_FONT, fill=SUB_FILL)
-    c8 = put(sl, r, 8, ld.to_pydatetime() if pd.notna(ld) else None, font=LBL_FONT, fill=SUB_FILL)
-    c7.number_format = "dd/mm/yyyy hh:mm"; c8.number_format = "dd/mm/yyyy hh:mm"
-    sl.freeze_panes = "A4"
-
-    sm = wb.create_sheet("Summary", 0)
-    sm.cell(row=1, column=1, value="Branch & Cashier Performance").font = TITLE_FONT
+    sm = wb.create_sheet("Branch Performance", 0)
+    sm.cell(row=1, column=1, value="Branch Performance").font = TITLE_FONT
     r = hrow(sm, 4, ["Branch", "Cashiers", "Total Bets", "Total Revokes", "Revoked Amount",
                      "Avg Bets / Cashier", "Avg Revokes / Cashier", "Total Betslips",
-                     "GW Margin %", "Net Win Margin %"],
-             [16, 11, 14, 14, 16, 17, 19, 14, 13, 15])
+                     "GW Margin %"],
+             [16, 11, 14, 14, 16, 17, 19, 14, 13])
     sm_first = r
     for br in BRANCHES:
         sub = cs[cs["Shop"] == br]; subs = slip[slip["Shop"] == br]
@@ -654,7 +624,6 @@ def build_workbook(cash, slip):
         put(sm, r, 7, round(revs / ncash, 1) if ncash else 0, '#,##0.0;(#,##0.0);-')
         put(sm, r, 8, int(subs["BetSlips"].sum()), INT_FMT)
         put(sm, r, 9, gw_margin(subs), PCT_FMT)
-        put(sm, r, 10, nwm_margin(subs), PCT_FMT)
         r += 1
     tcash = int(cs["Cashier"].nunique()); tbets = int(cs["Bets"].sum()); trev = int(cs["Revokes"].sum())
     trsum = float(cs["RevSum"].sum()); tslip = int(slip["BetSlips"].sum())
@@ -665,9 +634,35 @@ def build_workbook(cash, slip):
     put(sm, r, 7, round(trev / tcash, 1) if tcash else 0, '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
     put(sm, r, 8, tslip, INT_FMT, LBL_FONT, SUB_FILL)
     put(sm, r, 9, gw_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
-    put(sm, r, 10, nwm_margin(slip), PCT_FMT, LBL_FONT, SUB_FILL)
-    _margin_cf(sm, f"I{sm_first}:J{r}")
+    _margin_cf(sm, f"I{sm_first}:I{r}")
     r += 3
+
+    # ---- Games & bets per game, per branch (folded in from the old tabs) ----
+    sm.cell(row=r, column=1, value="Bets & revokes per game — by branch").font = LBL_FONT
+    r += 1
+    for br in BRANCHES:
+        sm.cell(row=r, column=1, value=str(br)).font = LBL_FONT
+        r += 1
+        r = hrow(sm, r, ["Game", "Bets", "Revokes", "Revoked Amount", "GW Margin %"],
+                 [30, 14, 15, 18, 14])
+        gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
+        gfirst = r
+        for _, row_ in gsub.iterrows():
+            put(sm, r, 1, row_["Game"])
+            put(sm, r, 2, int(row_["Bets"]), INT_FMT)
+            put(sm, r, 3, int(row_["Revokes"]), INT_FMT)
+            put(sm, r, 4, float(row_["RevSum"]), MON_FMT)
+            put(sm, r, 5, float(row_["GWpct"]), PCT_FMT)
+            r += 1
+        if r > gfirst:
+            _margin_cf(sm, f"E{gfirst}:E{r-1}")
+        brf = cash[cash["Shop"] == br]
+        put(sm, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
+        put(sm, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
+        r += 2
 
     csn = cs[~cs["IsMgr"]] if "IsMgr" in cs.columns else cs
     csn = csn if len(csn) else cs
@@ -697,6 +692,15 @@ def build_workbook(cash, slip):
     # remove the blank starter sheet openpyxl created
     if _starter in wb.worksheets:
         wb.remove(_starter)
+
+    # Order tabs: Branch Performance, All Cashiers, then the branch sheets in the
+    # order the boss specified (Potchefstroom last), then the Cashier Stats card.
+    branch_order = ["Malvern", "Randburg", "Pretoria", "White River", "Potchefstroom"]
+    ordered_branches = [b for b in branch_order if b in [str(x)[:31] for x in BRANCHES]]
+    ordered_branches += [str(b)[:31] for b in BRANCHES if str(b)[:31] not in ordered_branches]
+    desired = ["Branch Performance", "All Cashiers"] + ordered_branches + ["Cashier Stats"]
+    order = {name: i for i, name in enumerate(desired)}
+    wb._sheets.sort(key=lambda ws: order.get(ws.title, len(order)))
 
     # Force Excel to fully recalculate when the file opens, so the dependent-dropdown
     # array formulas (shop -> cashier -> game) populate immediately instead of showing
