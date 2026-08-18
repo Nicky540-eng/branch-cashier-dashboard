@@ -433,7 +433,7 @@ def build_workbook(cash, slip):
             #   more than 3 revokes -> orange on the Revokes cell
             bets_fill = RED_H if bets < avg_bets else None
             rev_fill = ORANGE_H if revokes > 3 else None
-            po_fill = BLUE_H if paid_out > 0 else None
+            po_fill = BLUE_H if paid_out > 10000 else None
             put(s, r, 1, row_["Cashier"])
             put(s, r, 2, bets, INT_FMT, BLACKB if bets_fill else BODY, bets_fill)
             put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
@@ -462,7 +462,7 @@ def build_workbook(cash, slip):
 
         subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
         subn = subn if len(subn) else sub
-        mb = sub.loc[sub["Bets"].idxmax()]
+        mb = subn.loc[subn["Bets"].idxmax()]
         lb = subn.loc[subn["Bets"].idxmin()]
         mr = subn.loc[subn["Revokes"].idxmax()]
         s.cell(row=r, column=1, value="Branch highlights").font = LBL_FONT
@@ -470,8 +470,8 @@ def build_workbook(cash, slip):
         r = hrow(s, r, ["Measure", "Cashier", "Value"], [40, 30, 18])
         for label, who, val, fmt in [
             ("Most bets (cashier)", mb["Cashier"], int(mb["Bets"]), INT_FMT),
-            ("Least bets (cashier, managers excluded)", lb["Cashier"], int(lb["Bets"]), INT_FMT),
-            ("Most revokes (cashier, managers excluded)", mr["Cashier"], int(mr["Revokes"]), INT_FMT),
+            ("Least bets (cashier)", lb["Cashier"], int(lb["Bets"]), INT_FMT),
+            ("Most revokes (cashier)", mr["Cashier"], int(mr["Revokes"]), INT_FMT),
             ("Revoked amount of that cashier", None, float(mr["RevSum"]), MON_FMT),
         ]:
             put(s, r, 1, label)
@@ -605,7 +605,6 @@ def build_workbook(cash, slip):
     put(ac, r, 4, float(allg["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
     put(ac, r, 5, gw_pct(cash), PCT_FMT, LBL_FONT, SUB_FILL)
     put(ac, r, 6, nwm_pct(cash), PCT_FMT, LBL_FONT, SUB_FILL)
-    ac.freeze_panes = "A5"
 
     sm = wb.create_sheet("Branch Performance", 0)
     sm.cell(row=1, column=1, value="Branch Performance").font = TITLE_FONT
@@ -637,36 +636,113 @@ def build_workbook(cash, slip):
     _margin_cf(sm, f"I{sm_first}:I{r}")
     r += 3
 
-    # ---- Games & bets per game, per branch (folded in from the old tabs) ----
-    sm.cell(row=r, column=1, value="Bets & revokes per game — by branch").font = LBL_FONT
+    # ---- Combined Per-Game Pivot Grid: Branches down, Games across ----
+    games = sorted(cash["Game"].dropna().unique())
+
+    sm.cell(row=r, column=1, value="Combined Performance per Game — By Branch").font = LBL_FONT
     r += 1
+
+    # 1. Main Header Row (Branch, Merged Game Names, OVERALL TOTAL)
+    sm.cell(row=r, column=1, value="Branch").font = HDR_FONT
+    sm.cell(row=r, column=1).fill = HDR_FILL
+    sm.cell(row=r, column=1).border = BOX
+    sm.cell(row=r, column=1).alignment = Alignment(vertical="center", horizontal="center")
+    sm.merge_cells(start_row=r, start_column=1, end_row=r+1, end_column=1)
+
+    c = 2
+    for g in games:
+        cell = sm.cell(row=r, column=c, value=g)
+        cell.font = HDR_FONT
+        cell.fill = HDR_FILL
+        cell.border = BOX
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        sm.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c+3)
+        # Fix missing borders/fills on the merged sub-cells
+        for offset in range(1, 4):
+            sm.cell(row=r, column=c+offset).border = BOX
+            sm.cell(row=r, column=c+offset).fill = HDR_FILL
+        c += 4
+
+    # Grand Totals header (far right)
+    cell = sm.cell(row=r, column=c, value="OVERALL TOTAL")
+    cell.font = HDR_FONT
+    cell.fill = HDR_FILL
+    cell.border = BOX
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    sm.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c+3)
+    for offset in range(1, 4):
+        sm.cell(row=r, column=c+offset).border = BOX
+        sm.cell(row=r, column=c+offset).fill = HDR_FILL
+    r += 1
+
+    # 2. Sub-header Row (Bets, Revokes, Rev Amount, GW%)
+    c = 2
+    sub_headers = ["Bets", "Revokes", "Rev Amount", "GW%"]
+    for _ in range(len(games) + 1):  # +1 to include the Overall Total section
+        for sh in sub_headers:
+            put(sm, r, c, sh, font=HDR_FONT, fill=HDR_FILL)
+            # Make the currency column slightly wider
+            sm.column_dimensions[get_column_letter(c)].width = 14 if sh == "Rev Amount" else 11
+            c += 1
+    r += 1
+
+    # 3. Data Rows: By Branch
+    pct_range_start = r
     for br in BRANCHES:
-        sm.cell(row=r, column=1, value=str(br)).font = LBL_FONT
-        r += 1
-        r = hrow(sm, r, ["Game", "Bets", "Revokes", "Revoked Amount", "GW Margin %"],
-                 [30, 14, 15, 18, 14])
-        gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
-        gfirst = r
-        for _, row_ in gsub.iterrows():
-            put(sm, r, 1, row_["Game"])
-            put(sm, r, 2, int(row_["Bets"]), INT_FMT)
-            put(sm, r, 3, int(row_["Revokes"]), INT_FMT)
-            put(sm, r, 4, float(row_["RevSum"]), MON_FMT)
-            put(sm, r, 5, float(row_["GWpct"]), PCT_FMT)
-            r += 1
-        if r > gfirst:
-            _margin_cf(sm, f"E{gfirst}:E{r-1}")
+        put(sm, r, 1, str(br))
+        gb = cg[cg["Shop"] == br].set_index("Game")
         brf = cash[cash["Shop"] == br]
-        put(sm, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
-        put(sm, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(sm, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(sm, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
-        put(sm, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
-        r += 2
+        
+        c = 2
+        for g in games:
+            if g in gb.index:
+                row_ = gb.loc[g]
+                put(sm, r, c, int(row_["Bets"]), INT_FMT)
+                put(sm, r, c+1, int(row_["Revokes"]), INT_FMT)
+                put(sm, r, c+2, float(row_["RevSum"]), MON_FMT)
+                put(sm, r, c+3, float(row_["GWpct"]), PCT_FMT)
+            else:
+                put(sm, r, c, None, INT_FMT)
+                put(sm, r, c+1, None, INT_FMT)
+                put(sm, r, c+2, None, MON_FMT)
+                put(sm, r, c+3, None, PCT_FMT)
+            c += 4
+            
+        # Branch Row Totals (far right)
+        put(sm, r, c, int(brf["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+1, int(brf["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+2, float(brf["RevokedSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+3, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
+        r += 1
+
+    # 4. Bottom Totals Row (All Branches)
+    put(sm, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
+    c = 2
+    for g in games:
+        gf = cash[cash["Game"] == g]
+        put(sm, r, c, int(gf["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+1, int(gf["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+2, float(gf["RevokedSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+        put(sm, r, c+3, gw_pct(gf), PCT_FMT, LBL_FONT, SUB_FILL)
+        c += 4
+        
+    # Grand Total Intersection (Bottom Right corner)
+    put(sm, r, c, int(cash["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, c+1, int(cash["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, c+2, float(cash["RevokedSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
+    put(sm, r, c+3, gw_pct(cash), PCT_FMT, LBL_FONT, SUB_FILL)
+
+    # 5. Apply conditional formatting safely to all GW% columns
+    # Every 4th column starting at col 5 (E) is the GW% column.
+    for col_idx in range(5, c+4, 4):
+        col_letter = get_column_letter(col_idx)
+        _margin_cf(sm, f"{col_letter}{pct_range_start}:{col_letter}{r}")
+
+    r += 3
 
     csn = cs[~cs["IsMgr"]] if "IsMgr" in cs.columns else cs
     csn = csn if len(csn) else cs
-    mb = cs.loc[cs["Bets"].idxmax()]; lb = csn.loc[csn["Bets"].idxmin()]
+    mb = csn.loc[csn["Bets"].idxmax()]; lb = csn.loc[csn["Bets"].idxmin()]
     mr = csn.loc[csn["Revokes"].idxmax()]; ma = csn.loc[csn["RevSum"].idxmax()]
     gt = cash.groupby("Game", as_index=False)["Bets"].sum(); gtop = gt.loc[gt["Bets"].idxmax()]
     sm.cell(row=r, column=1, value="Overall highlights (all branches)").font = LBL_FONT
@@ -674,10 +750,10 @@ def build_workbook(cash, slip):
     r = hrow(sm, r, ["Measure", "Cashier / Game", "Branch", "Value"], [40, 28, 16, 18])
     for label, who, brc, val, fmt in [
         ("Most bets — cashier", mb["Cashier"], mb["Shop"], int(mb["Bets"]), INT_FMT),
-        ("Least bets — cashier (managers excluded)", lb["Cashier"], lb["Shop"], int(lb["Bets"]), INT_FMT),
-        ("Most revokes — cashier (managers excluded)", mr["Cashier"], mr["Shop"], int(mr["Revokes"]), INT_FMT),
+        ("Least bets — cashier", lb["Cashier"], lb["Shop"], int(lb["Bets"]), INT_FMT),
+        ("Most revokes — cashier", mr["Cashier"], mr["Shop"], int(mr["Revokes"]), INT_FMT),
         ("Revoked amount of that cashier", None, None, float(mr["RevSum"]), MON_FMT),
-        ("Highest revoked amount (managers excluded)", ma["Cashier"], ma["Shop"], float(ma["RevSum"]), MON_FMT),
+        ("Highest revoked amount", ma["Cashier"], ma["Shop"], float(ma["RevSum"]), MON_FMT),
         ("Game with most bets", gtop["Game"], "All branches", int(gtop["Bets"]), INT_FMT),
     ]:
         put(sm, r, 1, label)
@@ -687,7 +763,6 @@ def build_workbook(cash, slip):
         else: sm.cell(row=r, column=3).border = BOX
         put(sm, r, 4, val, fmt)
         r += 1
-    sm.freeze_panes = "A5"
 
     # remove the blank starter sheet openpyxl created
     if _starter in wb.worksheets:
