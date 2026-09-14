@@ -439,8 +439,6 @@ def build_workbook(cash, slip):
         # below 5000 -> red on Name + Total Bets (all black bold text now).
         GREEN_NAME = PatternFill("solid", fgColor="92D050")   # the shade you picked
         RED_NAME = PatternFill("solid", fgColor="D0342C")     # true red
-        # Blue row highlight for cashiers who are paying out (PaidOut > 0).
-        BLUE_NAME = PatternFill("solid", fgColor="5B9BD5")    # darker blue for the row
         NAME_BLACK = Font(name=FONT, bold=True, size=10, color="000000")
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
@@ -449,13 +447,8 @@ def build_workbook(cash, slip):
             rev_fill = ORANGE_H if revokes > 3 else None
             # Paid Out cell still gets the blue flag when > 10,000.
             po_fill = BLUE_H if paid_out > 10000 else None
-            # Name + Total Bets highlight priority:
-            #   paying out (PaidOut > 0) -> BLUE row highlight on name + total bets
-            #   otherwise 5000+ -> green ; below 5000 -> red
-            if paid_out > 0:
-                name_fill = BLUE_NAME
-            else:
-                name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
+            # Name + Total Bets highlight by threshold (black bold text in both cases).
+            name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
             put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill, black_border=True)
             put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill, black_border=True)
             put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill, black_border=True)
