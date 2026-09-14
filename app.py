@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 FONT = "Arial"
-HDR_FILL = PatternFill("solid", fgColor="000000")            # black header (was navy)
+HDR_FILL = PatternFill("solid", fgColor="000000")            # black header
 HDR_FONT = Font(name=FONT, bold=True, color="FFFFFF", size=10)
 SUB_FILL = PatternFill("solid", fgColor="D9E1F2")
 TITLE_FONT = Font(name=FONT, bold=True, size=14, color="1F3864")
@@ -214,13 +214,13 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.worksheet.formula import ArrayFormula
     FONT = "Calibri"
-    NAVY = PatternFill("solid", fgColor="1F3864")
+    BLACK = PatternFill("solid", fgColor="000000")
     TITLEF = Font(name=FONT, bold=True, size=18, color="FFFFFF")
     LBL = Font(name=FONT, bold=True, size=11, color="1F3864")
     BIG = Font(name=FONT, bold=True, size=20, color="1F3864")
     CARD = PatternFill("solid", fgColor="F2F5FB")
     PICKF = PatternFill("solid", fgColor="FFF2CC")
-    med = Side(style="medium", color="1F3864"); thin = Side(style="thin", color="C9D3E8")
+    med = Side(style="medium", color="000000"); thin = Side(style="thin", color="000000")
     BOXM = Border(left=med, right=med, top=med, bottom=med)
     BOXT = Border(left=thin, right=thin, top=thin, bottom=thin)
     INTf = '#,##0;(#,##0);-'; MONf = 'R #,##0.00;(R #,##0.00);-'; PCTf = '0.00"%";-0.00"%";-'
@@ -290,10 +290,10 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
     for col_, w in zip('ABCDEFGH', [3, 22, 22, 18, 18, 4, 3, 3]):
         ws.column_dimensions[col_].width = w
     ws.merge_cells('B2:E3')
-    t = ws['B2']; t.value = title; t.font = TITLEF; t.fill = NAVY
+    t = ws['B2']; t.value = title; t.font = TITLEF; t.fill = BLACK
     t.alignment = Alignment(vertical="center", horizontal="left", indent=1)
     for cc in ['B2','C2','D2','E2','B3','C3','D3','E3']:
-        ws[cc].fill = NAVY
+        ws[cc].fill = BLACK
     # Row 5/6: SHOP selector
     ws['B5'] = "SHOP"; ws['B5'].font = LBL
     b6 = ws['B6']; b6.value = shops[0] if shops else ""
@@ -326,7 +326,7 @@ def _add_lookup_card(wb, title, data_key, rows, value_specs):
         col = positions[idx]; lr, vr = rowsets[idx]
         datacol = get_column_letter(4 + idx)  # D onward in data sheet
         l = ws[f'{col}{lr}']; l.value = lbl; l.font = Font(name=FONT, bold=True, size=9, color="FFFFFF")
-        l.fill = NAVY; l.alignment = Alignment(horizontal="center")
+        l.fill = BLACK; l.alignment = Alignment(horizontal="center")
         v = ws[f'{col}{vr}']
         if fmt == PCTf:
             v.value = (f'=IF($D$9="","",IFERROR(INDEX({dname}!${datacol}$2:${datacol}${Ndd},'
