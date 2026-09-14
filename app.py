@@ -432,7 +432,11 @@ def build_workbook(cash, slip):
         RED_NAME = PatternFill("solid", fgColor="D0342C")     # true red
         NAME_BLACK = Font(name=FONT, bold=True, size=10, color="000000")
         # Bold demarcation line between Cashier and Total Bets on every cashier row.
+        # MED on the right edge of the name cell, matching top/bottom/left so the
+        # whole grid keeps a consistent medium-weight look.
         DEMARC = Border(left=THIN, right=MED, top=THIN, bottom=THIN)
+
+        data_first_row = r
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
             bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
@@ -443,8 +447,6 @@ def build_workbook(cash, slip):
             # Name + Total Bets highlight by threshold (black bold text in both cases).
             name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
             put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill)
-            # Apply the thick right border on the name cell to draw the demarcation line.
-            s.cell(row=r, column=1).border = DEMARC
             put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill)
             put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
@@ -453,6 +455,8 @@ def build_workbook(cash, slip):
             put(s, r, 6, None)
             put(s, r, 7, None)
             r += 1
+
+        data_last_row = r - 1
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL)
         put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
@@ -461,6 +465,7 @@ def build_workbook(cash, slip):
         put(s, r, 5, float(sub["PaidOut"].sum()) if "PaidOut" in sub.columns else None, MON_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 6, None)
         put(s, r, 7, None)
+        branch_total_row = r
         r += 1
         # ---- Branch average per cashier: colour the Avg Bets cell only ----
         # above 5000 -> green ; 4301 to 5000 -> orange ; 4300 and below -> red
@@ -482,6 +487,7 @@ def build_workbook(cash, slip):
         put(s, r, 5, None)
         put(s, r, 6, None)
         put(s, r, 7, None)
+        avg_row = r
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
         WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
@@ -492,7 +498,23 @@ def build_workbook(cash, slip):
         put(s, r, 5, None)
         put(s, r, 6, None)
         put(s, r, 7, None)
+        counted_row = r
         r += 3
+
+        # ---- Apply a clean, continuous bold demarcation line between the Cashier
+        # column (A) and the Total Bets column (B), spanning every row of the block
+        # (data rows, totals, average, counted) so the divider runs the whole table
+        # neatly from the header down. Header row keeps its own border styling.
+        header_row = data_first_row - 1
+        for rr in range(header_row, counted_row + 1):
+            cell = s.cell(row=rr, column=1)
+            existing = cell.border
+            cell.border = Border(
+                left=existing.left if existing and existing.left else THIN,
+                right=MED,
+                top=existing.top if existing and existing.top else THIN,
+                bottom=existing.bottom if existing and existing.bottom else THIN,
+            )
 
         subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
         subn = subn if len(subn) else sub
