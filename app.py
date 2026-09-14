@@ -479,19 +479,19 @@ def build_workbook(cash, slip):
             avg_fill = ORANGE_AVG
         else:
             avg_fill = RED_AVG
-        avg_font = Font(name=FONT, bold=True, size=10, color="FFFFFF")
-        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, black_border=True)
+        # Black bold text on the average value + counted rows.
+        avg_font = Font(name=FONT, bold=True, size=10, color="000000")
+        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=avg_font, black_border=True)
         put(s, r, 2, avg_bets_rounded, INT_FMT, avg_font, avg_fill, black_border=True)
-        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT, black_border=True)
-        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, black_border=True)
+        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', avg_font, black_border=True)
+        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, avg_font, black_border=True)
         put(s, r, 5, None, black_border=True)
         put(s, r, 6, None, black_border=True)
         put(s, r, 7, None, black_border=True)
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
-        WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
-        put(s, r, 1, "Cashiers counted", font=WHITEB2, fill=ORANGE, black_border=True)
-        put(s, r, 2, int(len(sub)), INT_FMT, WHITEB2, ORANGE, black_border=True)
+        put(s, r, 1, "Cashiers counted", font=avg_font, fill=ORANGE, black_border=True)
+        put(s, r, 2, int(len(sub)), INT_FMT, avg_font, ORANGE, black_border=True)
         put(s, r, 3, None, black_border=True)
         put(s, r, 4, None, black_border=True)
         put(s, r, 5, None, black_border=True)
