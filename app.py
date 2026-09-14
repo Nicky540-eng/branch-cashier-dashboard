@@ -450,10 +450,10 @@ def build_workbook(cash, slip):
         put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
         put(s, r, 5, float(sub["PaidOut"].sum()) if "PaidOut" in sub.columns else None, MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 6, None, None, LBL_FONT, SUB_FILL)
-        put(s, r, 7, None, None, LBL_FONT, SUB_FILL)
+        put(s, r, 6, None)
+        put(s, r, 7, None)
         r += 1
-        # ---- Branch average per cashier: colour the Avg Bets cell ----
+        # ---- Branch average per cashier: colour the Avg Bets cell only ----
         # above 5000 -> green ; 4301 to 5000 -> orange ; 4300 and below -> red
         GREEN_AVG = PatternFill("solid", fgColor="00B050")
         ORANGE_AVG = PatternFill("solid", fgColor="FFA500")
@@ -466,23 +466,23 @@ def build_workbook(cash, slip):
         else:
             avg_fill = RED_AVG
         avg_font = Font(name=FONT, bold=True, size=10, color="FFFFFF")
-        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, fill=SUB_FILL)
+        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT)
         put(s, r, 2, avg_bets_rounded, INT_FMT, avg_font, avg_fill)
-        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT, SUB_FILL)
-        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 5, None, None, LBL_FONT, SUB_FILL)
-        put(s, r, 6, None, None, LBL_FONT, SUB_FILL)
-        put(s, r, 7, None, None, LBL_FONT, SUB_FILL)
+        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT)
+        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT)
+        put(s, r, 5, None)
+        put(s, r, 6, None)
+        put(s, r, 7, None)
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
         WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
         put(s, r, 1, "Cashiers counted", font=WHITEB2, fill=ORANGE)
         put(s, r, 2, int(len(sub)), INT_FMT, WHITEB2, ORANGE)
-        put(s, r, 3, None, None, WHITEB2, ORANGE)
-        put(s, r, 4, None, None, WHITEB2, ORANGE)
-        put(s, r, 5, None, None, WHITEB2, ORANGE)
-        put(s, r, 6, None, None, WHITEB2, ORANGE)
-        put(s, r, 7, None, None, WHITEB2, ORANGE)
+        put(s, r, 3, None)
+        put(s, r, 4, None)
+        put(s, r, 5, None)
+        put(s, r, 6, None)
+        put(s, r, 7, None)
         r += 3
 
         subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
