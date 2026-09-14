@@ -24,14 +24,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 FONT = "Arial"
-HDR_FILL = PatternFill("solid", fgColor="1F3864")
+HDR_FILL = PatternFill("solid", fgColor="000000")            # black header (was navy)
 HDR_FONT = Font(name=FONT, bold=True, color="FFFFFF", size=10)
 SUB_FILL = PatternFill("solid", fgColor="D9E1F2")
 TITLE_FONT = Font(name=FONT, bold=True, size=14, color="1F3864")
 LBL_FONT = Font(name=FONT, bold=True, size=10)
 BODY = Font(name=FONT, size=10)
 NOTE_F = Font(name=FONT, size=9, italic=True, color="595959")
-THIN = Side(style="thin", color="BFBFBF")
+THIN = Side(style="thin", color="000000")                    # black table lines
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 INT_FMT = '#,##0;[Red](#,##0);-'
 MON_FMT = 'R #,##0.00;[Red](R #,##0.00);-'
@@ -367,17 +367,26 @@ def build_workbook(cash, slip):
 
     wb = Workbook()
 
-    def hrow(s, row, headers, widths=None):
+    # Branch-sheet headers use black fill; other tabs keep navy.
+    BR_HDR_FILL = PatternFill("solid", fgColor="000000")
+    BR_HDR_FONT = Font(name=FONT, bold=True, color="FFFFFF", size=10)
+    BR_THIN = Side(style="thin", color="000000")
+    BR_BOX = Border(left=BR_THIN, right=BR_THIN, top=BR_THIN, bottom=BR_THIN)
+
+    def hrow(s, row, headers, widths=None, black=False):
+        fill = BR_HDR_FILL if black else HDR_FILL
+        font = BR_HDR_FONT if black else HDR_FONT
+        brd = BR_BOX if black else BOX
         for i, h in enumerate(headers, start=1):
             c = s.cell(row=row, column=i, value=h)
-            c.fill = HDR_FILL; c.font = HDR_FONT; c.border = BOX
+            c.fill = fill; c.font = font; c.border = brd
             c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         if widths:
             for i, w in enumerate(widths, start=1):
                 s.column_dimensions[get_column_letter(i)].width = w
         return row + 1
 
-    def put(s, r, c, val, fmt=None, font=BODY, fill=None, border=True):
+    def put(s, r, c, val, fmt=None, font=BODY, fill=None, border=True, black_border=False):
         cell = s.cell(row=r, column=c, value=val)
         cell.font = font
         if fmt:
@@ -385,7 +394,7 @@ def build_workbook(cash, slip):
         if fill:
             cell.fill = fill
         if border:
-            cell.border = BOX
+            cell.border = BR_BOX if black_border else BOX
         return cell
 
     # A blank starter sheet exists (wb.active); we'll remove it at the end.
@@ -409,13 +418,14 @@ def build_workbook(cash, slip):
 
     for br in BRANCHES:
         s = wb.create_sheet(str(br)[:31])
+        s.sheet_view.showGridLines = True                       # whole sheet has clean lines
         s.cell(row=1, column=1, value=f"{br} — Cashier & Game Report").font = TITLE_FONT
         r = 3
         s.cell(row=r, column=1, value="Cashier performance").font = LBL_FONT
         r += 1
         r = hrow(s, r, ["Cashier", "Total Bets", "Total Revokes", "Revoked Amount",
                         "Paid Out Amount", "Trents comment", "Branch manager feedback"],
-                 [30, 14, 15, 18, 16, 30, 30])
+                 [30, 14, 15, 18, 16, 30, 30], black=True)
         sub = cs[cs["Shop"] == br].sort_values("Bets", ascending=False)
         # Branch per-cashier averages drive the red/orange highlight thresholds.
         avg_bets = float(sub["Bets"].mean()) if len(sub) else 0.0
@@ -439,23 +449,23 @@ def build_workbook(cash, slip):
             po_fill = BLUE_H if paid_out > 10000 else None
             # Name + Total Bets highlight by threshold (black bold text in both cases).
             name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
-            put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill)
-            put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill)
-            put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
-            put(s, r, 4, float(row_["RevSum"]), MON_FMT)
+            put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill, black_border=True)
+            put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill, black_border=True)
+            put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill, black_border=True)
+            put(s, r, 4, float(row_["RevSum"]), MON_FMT, border=True, black_border=True)
             put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
-                BLACKB if po_fill else BODY, po_fill)
-            put(s, r, 6, None)
-            put(s, r, 7, None)
+                BLACKB if po_fill else BODY, po_fill, black_border=True)
+            put(s, r, 6, None, border=True, black_border=True)
+            put(s, r, 7, None, border=True, black_border=True)
             r += 1
         brf = cash[cash["Shop"] == br]
-        put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL)
-        put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 5, float(sub["PaidOut"].sum()) if "PaidOut" in sub.columns else None, MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 6, None)
-        put(s, r, 7, None)
+        put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL, black_border=True)
+        put(s, r, 2, int(sub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 3, int(sub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 4, float(sub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 5, float(sub["PaidOut"].sum()) if "PaidOut" in sub.columns else None, MON_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 6, None, border=True, black_border=True)
+        put(s, r, 7, None, border=True, black_border=True)
         r += 1
         # ---- Branch average per cashier: colour the Avg Bets cell only ----
         # above 5000 -> green ; 4301 to 5000 -> orange ; 4300 and below -> red
@@ -470,23 +480,23 @@ def build_workbook(cash, slip):
         else:
             avg_fill = RED_AVG
         avg_font = Font(name=FONT, bold=True, size=10, color="FFFFFF")
-        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT)
-        put(s, r, 2, avg_bets_rounded, INT_FMT, avg_font, avg_fill)
-        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT)
-        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT)
-        put(s, r, 5, None)
-        put(s, r, 6, None)
-        put(s, r, 7, None)
+        put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=LBL_FONT, black_border=True)
+        put(s, r, 2, avg_bets_rounded, INT_FMT, avg_font, avg_fill, black_border=True)
+        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', LBL_FONT, black_border=True)
+        put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, LBL_FONT, black_border=True)
+        put(s, r, 5, None, black_border=True)
+        put(s, r, 6, None, black_border=True)
+        put(s, r, 7, None, black_border=True)
         r += 1
         ORANGE = PatternFill("solid", fgColor="E8730C")
         WHITEB2 = Font(name="Calibri", bold=True, color="FFFFFF")
-        put(s, r, 1, "Cashiers counted", font=WHITEB2, fill=ORANGE)
-        put(s, r, 2, int(len(sub)), INT_FMT, WHITEB2, ORANGE)
-        put(s, r, 3, None)
-        put(s, r, 4, None)
-        put(s, r, 5, None)
-        put(s, r, 6, None)
-        put(s, r, 7, None)
+        put(s, r, 1, "Cashiers counted", font=WHITEB2, fill=ORANGE, black_border=True)
+        put(s, r, 2, int(len(sub)), INT_FMT, WHITEB2, ORANGE, black_border=True)
+        put(s, r, 3, None, black_border=True)
+        put(s, r, 4, None, black_border=True)
+        put(s, r, 5, None, black_border=True)
+        put(s, r, 6, None, black_border=True)
+        put(s, r, 7, None, black_border=True)
         r += 3
 
         subn = sub[~sub["IsMgr"]] if "IsMgr" in sub.columns else sub
@@ -496,55 +506,55 @@ def build_workbook(cash, slip):
         mr = subn.loc[subn["Revokes"].idxmax()]
         s.cell(row=r, column=1, value="Branch highlights").font = LBL_FONT
         r += 1
-        r = hrow(s, r, ["Measure", "Cashier", "Value"], [40, 30, 18])
+        r = hrow(s, r, ["Measure", "Cashier", "Value"], [40, 30, 18], black=True)
         for label, who, val, fmt in [
             ("Most bets (cashier)", mb["Cashier"], int(mb["Bets"]), INT_FMT),
             ("Least bets (cashier)", lb["Cashier"], int(lb["Bets"]), INT_FMT),
             ("Most revokes (cashier)", mr["Cashier"], int(mr["Revokes"]), INT_FMT),
             ("Revoked amount of that cashier", None, float(mr["RevSum"]), MON_FMT),
         ]:
-            put(s, r, 1, label)
+            put(s, r, 1, label, black_border=True)
             if who is not None:
-                put(s, r, 2, who)
+                put(s, r, 2, who, black_border=True)
             else:
-                s.cell(row=r, column=2).border = BOX
-            put(s, r, 3, val, fmt)
+                s.cell(row=r, column=2).border = BR_BOX
+            put(s, r, 3, val, fmt, black_border=True)
             r += 1
         r += 2
 
         s.cell(row=r, column=1, value="Bets & revokes per game").font = LBL_FONT
         r += 1
         r = hrow(s, r, ["Game", "Bets", "Revokes", "Revoked Amount",
-                        "GW Margin %"], [30, 14, 15, 18, 14])
+                        "GW Margin %"], [30, 14, 15, 18, 14], black=True)
         gsub = cg[cg["Shop"] == br].sort_values("Bets", ascending=False)
         gfirst = r
         for _, row_ in gsub.iterrows():
-            put(s, r, 1, row_["Game"])
-            put(s, r, 2, int(row_["Bets"]), INT_FMT)
-            put(s, r, 3, int(row_["Revokes"]), INT_FMT)
-            put(s, r, 4, float(row_["RevSum"]), MON_FMT)
-            put(s, r, 5, float(row_["GWpct"]), PCT_FMT)
+            put(s, r, 1, row_["Game"], black_border=True)
+            put(s, r, 2, int(row_["Bets"]), INT_FMT, black_border=True)
+            put(s, r, 3, int(row_["Revokes"]), INT_FMT, black_border=True)
+            put(s, r, 4, float(row_["RevSum"]), MON_FMT, black_border=True)
+            put(s, r, 5, float(row_["GWpct"]), PCT_FMT, black_border=True)
             r += 1
         if r > gfirst:
             _margin_cf(s, f"E{gfirst}:E{r-1}")
         brf = cash[cash["Shop"] == br]
-        put(s, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL)
-        put(s, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL)
-        put(s, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL)
+        put(s, r, 1, "TOTAL", font=LBL_FONT, fill=SUB_FILL, black_border=True)
+        put(s, r, 2, int(gsub["Bets"].sum()), INT_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 3, int(gsub["Revokes"].sum()), INT_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 4, float(gsub["RevSum"].sum()), MON_FMT, LBL_FONT, SUB_FILL, black_border=True)
+        put(s, r, 5, gw_pct(brf), PCT_FMT, LBL_FONT, SUB_FILL, black_border=True)
         r += 2
         if len(gsub):
             gb = gsub.loc[gsub["Bets"].idxmax()]; gr = gsub.loc[gsub["Revokes"].idxmax()]
             BRIGHT = PatternFill("solid", fgColor="FFEB00")  # bright yellow
             BLKB = Font(name="Calibri", bold=True, color="000000")
-            put(s, r, 1, "Game with most bets", font=BLKB, fill=BRIGHT)
-            put(s, r, 2, gb["Game"], font=BLKB, fill=BRIGHT)
-            put(s, r, 3, int(gb["Bets"]), INT_FMT, BLKB, BRIGHT)
+            put(s, r, 1, "Game with most bets", font=BLKB, fill=BRIGHT, black_border=True)
+            put(s, r, 2, gb["Game"], font=BLKB, fill=BRIGHT, black_border=True)
+            put(s, r, 3, int(gb["Bets"]), INT_FMT, BLKB, BRIGHT, black_border=True)
             r += 1
-            put(s, r, 1, "Game with most revokes", font=BLKB, fill=BRIGHT)
-            put(s, r, 2, gr["Game"], font=BLKB, fill=BRIGHT)
-            put(s, r, 3, int(gr["Revokes"]), INT_FMT, BLKB, BRIGHT)
+            put(s, r, 1, "Game with most revokes", font=BLKB, fill=BRIGHT, black_border=True)
+            put(s, r, 2, gr["Game"], font=BLKB, fill=BRIGHT, black_border=True)
+            put(s, r, 3, int(gr["Revokes"]), INT_FMT, BLKB, BRIGHT, black_border=True)
         s.freeze_panes = "A4"
 
     ac = wb.create_sheet("All Cashiers")
