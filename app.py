@@ -509,8 +509,11 @@ def build_workbook(cash, slip):
             ("Revoked amount of that cashier", None, float(mr["RevSum"]), MON_FMT),
         ]:
             put(s, r, 1, label)
-            if who is not None: put(s, r, 2, who)
-            else: s.cell(row=r, column=2).border = BOX            put(s, r, 3, val, fmt)
+            if who is not None:
+                put(s, r, 2, who)
+            else:
+                s.cell(row=r, column=2).border = BOX
+            put(s, r, 3, val, fmt)
             r += 1
         r += 2
 
