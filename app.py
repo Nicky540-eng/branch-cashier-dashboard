@@ -1,3 +1,4 @@
+"""
 Playbet — Branch & Cashier Report Builder
 Upload the Cash Operations Summary and Slip Summary CSVs, view the dashboard,
 download the full Excel workbook.
