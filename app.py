@@ -32,6 +32,7 @@ LBL_FONT = Font(name=FONT, bold=True, size=10)
 BODY = Font(name=FONT, size=10)
 NOTE_F = Font(name=FONT, size=9, italic=True, color="595959")
 THIN = Side(style="thin", color="BFBFBF")
+MED = Side(style="medium", color="1F3864")   # bold demarcation line
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 INT_FMT = '#,##0;[Red](#,##0);-'
 MON_FMT = 'R #,##0.00;[Red](R #,##0.00);-'
@@ -426,11 +427,12 @@ def build_workbook(cash, slip):
         ORANGE_H = PatternFill("solid", fgColor="ED9C28")  # above-3 revokes (darker orange)
         BLACKB = Font(name=FONT, size=10, color="000000")
         # Cashier-row threshold highlight: 5000+ -> green on Name + Total Bets,
-        # below 5000 -> red on Name + Total Bets. (Uses this green: 92D050.)
+        # below 5000 -> red on Name + Total Bets (all black bold text now).
         GREEN_NAME = PatternFill("solid", fgColor="92D050")   # the shade you picked
         RED_NAME = PatternFill("solid", fgColor="D0342C")     # true red
         NAME_BLACK = Font(name=FONT, bold=True, size=10, color="000000")
-        NAME_WHITE = Font(name=FONT, bold=True, size=10, color="FFFFFF")
+        # Bold demarcation line between Cashier and Total Bets on every cashier row.
+        DEMARC = Border(left=THIN, right=MED, top=THIN, bottom=THIN)
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
             bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
@@ -438,15 +440,12 @@ def build_workbook(cash, slip):
             rev_fill = ORANGE_H if revokes > 3 else None
             # Paid Out cell still gets the blue flag when > 10,000.
             po_fill = BLUE_H if paid_out > 10000 else None
-            # Name + Total Bets highlight by threshold.
-            if bets >= 5000:
-                name_fill = GREEN_NAME
-                name_font = NAME_BLACK
-            else:
-                name_fill = RED_NAME
-                name_font = NAME_WHITE
-            put(s, r, 1, row_["Cashier"], None, name_font, name_fill)
-            put(s, r, 2, bets, INT_FMT, name_font, name_fill)
+            # Name + Total Bets highlight by threshold (black bold text in both cases).
+            name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
+            put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill)
+            # Apply the thick right border on the name cell to draw the demarcation line.
+            s.cell(row=r, column=1).border = DEMARC
+            put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill)
             put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
             put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
@@ -511,8 +510,7 @@ def build_workbook(cash, slip):
         ]:
             put(s, r, 1, label)
             if who is not None: put(s, r, 2, who)
-            else: s.cell(row=r, column=2).border = BOX
-            put(s, r, 3, val, fmt)
+            else: s.cell(row=r, column=2).border = BOX            put(s, r, 3, val, fmt)
             r += 1
         r += 2
 
