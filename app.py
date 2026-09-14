@@ -422,21 +422,31 @@ def build_workbook(cash, slip):
         avg_revokes = float(sub["Revokes"].mean()) if len(sub) else 0.0
         # Highlight fills (black text inside every highlighted block).
         BLUE_H = PatternFill("solid", fgColor="5B9BD5")    # paid out (darker blue)
-        RED_H = PatternFill("solid", fgColor="D0342C")     # below-avg bets (true red)
+        RED_H = PatternFill("solid", fgColor="D0342C")     # below threshold (true red)
         ORANGE_H = PatternFill("solid", fgColor="ED9C28")  # above-3 revokes (darker orange)
         BLACKB = Font(name=FONT, size=10, color="000000")
+        # Cashier-row threshold highlight: 5000+ -> green on Name + Total Bets,
+        # below 5000 -> red on Name + Total Bets. (Uses this green: 92D050.)
+        GREEN_NAME = PatternFill("solid", fgColor="92D050")   # the shade you picked
+        RED_NAME = PatternFill("solid", fgColor="D0342C")     # true red
+        NAME_BLACK = Font(name=FONT, bold=True, size=10, color="000000")
+        NAME_WHITE = Font(name=FONT, bold=True, size=10, color="FFFFFF")
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
             bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
-            # Per-cell highlights so every flag on a cashier shows at once:
-            #   paid out  -> blue on the Paid Out cell
-            #   below-avg bets -> red on the Bets cell
-            #   more than 3 revokes -> orange on the Revokes cell
-            bets_fill = RED_H if bets < avg_bets else None
+            # Revokes cell still gets the orange flag when > 3.
             rev_fill = ORANGE_H if revokes > 3 else None
+            # Paid Out cell still gets the blue flag when > 10,000.
             po_fill = BLUE_H if paid_out > 10000 else None
-            put(s, r, 1, row_["Cashier"])
-            put(s, r, 2, bets, INT_FMT, BLACKB if bets_fill else BODY, bets_fill)
+            # Name + Total Bets highlight by threshold.
+            if bets >= 5000:
+                name_fill = GREEN_NAME
+                name_font = NAME_BLACK
+            else:
+                name_fill = RED_NAME
+                name_font = NAME_WHITE
+            put(s, r, 1, row_["Cashier"], None, name_font, name_fill)
+            put(s, r, 2, bets, INT_FMT, name_font, name_fill)
             put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill)
             put(s, r, 4, float(row_["RevSum"]), MON_FMT)
             put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
