@@ -430,7 +430,7 @@ def build_workbook(cash, slip):
         # Branch per-cashier averages drive the bets highlight thresholds.
         avg_bets = float(sub["Bets"].mean()) if len(sub) else 0.0
         # ---- Cell highlight fills -------------------------------------------
-        # Paid Out Amount: blue when >= 10,000
+        # Paid Out Amount: blue when >= 10,000 (extends to comment columns too)
         BLUE_H = PatternFill("solid", fgColor="5B9BD5")
         # Total Bets: green if above branch average, red if below
         GREEN_BETS = PatternFill("solid", fgColor="92D050")
@@ -440,8 +440,8 @@ def build_workbook(cash, slip):
         ORANGE_REV = PatternFill("solid", fgColor="ED9C28")
         RED_REV = PatternFill("solid", fgColor="D0342C")
         BLACKB = Font(name=FONT, size=10, color="000000")
-        WHITEB = Font(name=FONT, bold=True, size=10, color="FFFFFF")
         NAME_FONT = Font(name=FONT, size=10, color="000000")  # cashier name = plain black
+        PAYOUT_NOTE = "pay out cashier"
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
             bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
@@ -459,7 +459,8 @@ def build_workbook(cash, slip):
                 bets_fill = RED_BETS
             else:
                 bets_fill = None  # equal to average -> no highlight
-            # ---- Paid Out Amount cell: blue when >= 10,000 ----
+            # ---- Paid Out Amount cell: blue when >= 10,000 (highlight extends to
+            # Trents comment and Branch manager feedback too) ----
             po_fill = BLUE_H if paid_out >= 10000 else None
             # Cashier name — plain (no fill)
             put(s, r, 1, row_["Cashier"], None, NAME_FONT, None, black_border=True)
@@ -468,8 +469,11 @@ def build_workbook(cash, slip):
             put(s, r, 4, float(row_["RevSum"]), MON_FMT, border=True, black_border=True)
             put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
                 BLACKB if po_fill else BODY, po_fill, black_border=True)
-            put(s, r, 6, None, border=True, black_border=True)
-            put(s, r, 7, None, border=True, black_border=True)
+            # Trents comment — write "pay out cashier" and carry the blue across
+            put(s, r, 6, PAYOUT_NOTE if po_fill else None, None,
+                BLACKB if po_fill else BODY, po_fill, black_border=True)
+            # Branch manager feedback — carry the blue across
+            put(s, r, 7, None, border=True, black_border=True, fill=po_fill)
             r += 1
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL, black_border=True)
