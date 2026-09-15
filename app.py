@@ -427,46 +427,49 @@ def build_workbook(cash, slip):
                         "Paid Out Amount", "Trents comment", "Branch manager feedback"],
                  [30, 14, 15, 18, 16, 30, 30], black=True)
         sub = cs[cs["Shop"] == br].sort_values("Bets", ascending=False)
-        # Branch per-cashier averages drive the red/orange highlight thresholds.
+        # Branch per-cashier averages drive the bets highlight thresholds.
         avg_bets = float(sub["Bets"].mean()) if len(sub) else 0.0
-        avg_revokes = float(sub["Revokes"].mean()) if len(sub) else 0.0
-        # Highlight fills (black text inside every highlighted block).
-        BLUE_H = PatternFill("solid", fgColor="5B9BD5")    # paid out (darker blue)
-        RED_H = PatternFill("solid", fgColor="D0342C")     # below threshold (true red)
-        ORANGE_H = PatternFill("solid", fgColor="ED9C28")  # above-3 revokes (darker orange)
+        # ---- Cell highlight fills -------------------------------------------
+        # Paid Out Amount: blue when >= 10,000
+        BLUE_H = PatternFill("solid", fgColor="5B9BD5")
+        # Total Bets: green if above branch average, red if below
+        GREEN_BETS = PatternFill("solid", fgColor="92D050")
+        RED_BETS = PatternFill("solid", fgColor="D0342C")
+        # Total Revokes: green = 0 ; orange = 1-3 ; red = 4+
+        GREEN_REV = PatternFill("solid", fgColor="92D050")
+        ORANGE_REV = PatternFill("solid", fgColor="ED9C28")
+        RED_REV = PatternFill("solid", fgColor="D0342C")
         BLACKB = Font(name=FONT, size=10, color="000000")
-        # Cashier-row threshold highlight: 5000+ -> green on Name + Total Bets,
-        # below 5000 -> red on Name + Total Bets (all black bold text now).
-        GREEN_NAME = PatternFill("solid", fgColor="92D050")   # the shade you picked
-        RED_NAME = PatternFill("solid", fgColor="D0342C")     # true red
-        # Blue row highlight for cashiers who are paying out — applied to the whole row.
-        BLUE_ROW = PatternFill("solid", fgColor="5B9BD5")     # darker blue
-        NAME_BLACK = Font(name=FONT, bold=True, size=10, color="000000")
+        WHITEB = Font(name=FONT, bold=True, size=10, color="FFFFFF")
+        NAME_FONT = Font(name=FONT, size=10, color="000000")  # cashier name = plain black
         for _, row_ in sub.iterrows():
             paid_out = float(row_.get("PaidOut", 0) or 0)
             bets = int(row_["Bets"]); revokes = int(row_["Revokes"])
-            # Paying-out priority: if PaidOut > 0, highlight the WHOLE row in blue.
-            if paid_out > 0:
-                row_fill = BLUE_ROW
-                row_font = NAME_BLACK
-                put(s, r, 1, row_["Cashier"], None, row_font, row_fill, black_border=True)
-                put(s, r, 2, bets, INT_FMT, row_font, row_fill, black_border=True)
-                put(s, r, 3, revokes, INT_FMT, row_font, row_fill, black_border=True)
-                put(s, r, 4, float(row_["RevSum"]), MON_FMT, row_font, row_fill, black_border=True)
-                put(s, r, 5, paid_out, MON_FMT, row_font, row_fill, black_border=True)
-                put(s, r, 6, None, border=True, black_border=True, fill=row_fill)
-                put(s, r, 7, None, border=True, black_border=True, fill=row_fill)
+            # ---- Total Revokes cell: green (0) / orange (1-3) / red (4+) ----
+            if revokes == 0:
+                rev_fill = GREEN_REV
+            elif revokes <= 3:
+                rev_fill = ORANGE_REV
             else:
-                rev_fill = ORANGE_H if revokes > 3 else None
-                po_fill = BLUE_H if paid_out > 10000 else None
-                name_fill = GREEN_NAME if bets >= 5000 else RED_NAME
-                put(s, r, 1, row_["Cashier"], None, NAME_BLACK, name_fill, black_border=True)
-                put(s, r, 2, bets, INT_FMT, NAME_BLACK, name_fill, black_border=True)
-                put(s, r, 3, revokes, INT_FMT, BLACKB if rev_fill else BODY, rev_fill, black_border=True)
-                put(s, r, 4, float(row_["RevSum"]), MON_FMT, border=True, black_border=True)
-                put(s, r, 5, None, border=True, black_border=True)
-                put(s, r, 6, None, border=True, black_border=True)
-                put(s, r, 7, None, border=True, black_border=True)
+                rev_fill = RED_REV
+            # ---- Total Bets cell: green if above branch average, red if below ----
+            if bets > avg_bets:
+                bets_fill = GREEN_BETS
+            elif bets < avg_bets:
+                bets_fill = RED_BETS
+            else:
+                bets_fill = None  # equal to average -> no highlight
+            # ---- Paid Out Amount cell: blue when >= 10,000 ----
+            po_fill = BLUE_H if paid_out >= 10000 else None
+            # Cashier name — plain (no fill)
+            put(s, r, 1, row_["Cashier"], None, NAME_FONT, None, black_border=True)
+            put(s, r, 2, bets, INT_FMT, BLACKB, bets_fill, black_border=True)
+            put(s, r, 3, revokes, INT_FMT, BLACKB, rev_fill, black_border=True)
+            put(s, r, 4, float(row_["RevSum"]), MON_FMT, border=True, black_border=True)
+            put(s, r, 5, paid_out if paid_out > 0 else None, MON_FMT,
+                BLACKB if po_fill else BODY, po_fill, black_border=True)
+            put(s, r, 6, None, border=True, black_border=True)
+            put(s, r, 7, None, border=True, black_border=True)
             r += 1
         brf = cash[cash["Shop"] == br]
         put(s, r, 1, "BRANCH TOTAL", font=LBL_FONT, fill=SUB_FILL, black_border=True)
@@ -493,7 +496,7 @@ def build_workbook(cash, slip):
         avg_font = Font(name=FONT, bold=True, size=10, color="000000")
         put(s, r, 1, "BRANCH AVERAGE (per cashier)", font=avg_font, black_border=True)
         put(s, r, 2, avg_bets_rounded, INT_FMT, avg_font, avg_fill, black_border=True)
-        put(s, r, 3, round(avg_revokes, 1), '#,##0.0;(#,##0.0);-', avg_font, black_border=True)
+        put(s, r, 3, round(float(sub["Revokes"].mean()), 1) if len(sub) else 0, '#,##0.0;(#,##0.0);-', avg_font, black_border=True)
         put(s, r, 4, round(float(sub["RevSum"].mean()), 2) if len(sub) else 0, MON_FMT, avg_font, black_border=True)
         put(s, r, 5, None, black_border=True)
         put(s, r, 6, None, black_border=True)
